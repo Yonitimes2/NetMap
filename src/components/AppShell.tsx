@@ -7,7 +7,8 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useApp, useHydrated } from "@/lib/store";
 import { ROLE_LABEL } from "@/lib/access";
 import { DialogHost, askConfirm } from "./dialogs";
-import { useHistory, useUndoShortcuts } from "@/lib/history";
+import { useUndoShortcuts } from "@/lib/history";
+import { useToast } from "@/lib/toast";
 
 export interface Crumb {
   label: string;
@@ -57,24 +58,26 @@ export function AppShell({
         {ready ? children : <div className="grid flex-1 place-items-center p-10 text-slate-400">טוען…</div>}
       </main>
       <DialogHost />
-      <UndoFlash />
+      <Toast />
     </div>
   );
 }
 
-/** Short message after undo / redo, e.g. "בוטל: שינוי קירות". */
-function UndoFlash() {
-  const flash = useHistory((s) => s.flash);
-  const [hidden, setHidden] = useState<number | null>(null);
+/** Short message at the bottom, e.g. "בוטל: שינוי קירות" or "הוכנס לארון…". */
+function Toast() {
+  const { text, tone, n } = useToast();
+  const [hidden, setHidden] = useState(0);
   useEffect(() => {
-    if (!flash) return;
-    const t = setTimeout(() => setHidden(flash.n), 1800);
+    if (!text) return;
+    const t = setTimeout(() => setHidden(n), 2600);
     return () => clearTimeout(t);
-  }, [flash]);
-  if (!flash || hidden === flash.n) return null;
+  }, [text, n]);
+  if (!text || hidden === n) return null;
   return (
-    <div className="pointer-events-none fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-slate-900/90 px-4 py-2 text-sm text-white shadow-lg">
-      {flash.text}
+    <div
+      className={`pointer-events-none fixed bottom-6 left-1/2 z-50 max-w-[90vw] -translate-x-1/2 rounded-full px-4 py-2 text-sm text-white shadow-lg ${tone === "error" ? "bg-red-600/95" : "bg-slate-900/90"}`}
+    >
+      {text}
     </div>
   );
 }

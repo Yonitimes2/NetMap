@@ -22,9 +22,9 @@ import {
   X,
 } from "lucide-react";
 import { redo, undo, useHistory } from "@/lib/history";
-import { CABLE_TYPES, DEVICE_TYPES, LAYERS, TRAY_TYPES, deviceTypeById, layerById } from "@/lib/catalog";
+import { CABLE_RUNS, CABLE_TYPES, DEVICE_TYPES, LAYERS, TRAY_TYPES, deviceTypeById, layerById } from "@/lib/catalog";
 import { CABLE_PASS, OBSTACLE_KINDS, OPENING_KINDS, WALL_TYPES } from "@/lib/space-catalog";
-import type { ObstacleKind, OpeningKind, WallType } from "@/lib/types";
+import type { CableRun, ObstacleKind, OpeningKind, WallType } from "@/lib/types";
 import { cx } from "../ui";
 import { useEditor, type Tool } from "./editor-store";
 
@@ -179,6 +179,7 @@ function DevicePalette({ onClose }: { onClose: () => void }) {
 function ToolHint() {
   const { tool, placeType, cableType, setCableType, trayType, setTrayType } = useEditor();
   const { wallType, setWallType, openingKind, setOpeningKind, obstacleKind, setObstacleKind } = useEditor();
+  const { cableRun, setCableRun } = useEditor();
   if (tool === "select") return null;
   const hint: Record<Tool, string> = {
     select: "",
@@ -187,7 +188,7 @@ function ToolHint() {
     opening: "לחצו על קיר כדי להוסיף בו פתח",
     obstacle: "לחצו על המפה כדי להציב",
     place: `לחץ על המפה כדי להציב: ${deviceTypeById(placeType).label}`,
-    cable: "לחץ על ציוד להתחלה, לחץ על המפה לנקודות ביניים, ולחץ על ציוד היעד לסיום",
+    cable: "לחצו על ציוד להתחלה, על המפה לנקודות ביניים, ועל הציוד ביעד לסיום. כדי לפצל מכבל קיים, התחילו בלחיצה עליו",
     tray: "לחץ לאורך התוואי. לחיצה כפולה או Enter לסיום",
     area: "לחץ על פינות האזור. לחיצה על הנקודה הראשונה לסגירה",
     note: "לחץ על המפה כדי להוסיף הערה",
@@ -236,6 +237,22 @@ function ToolHint() {
           ))}
         </select>
       )}
+      {tool === "cable" && (
+        <select
+          value={cableRun ?? ""}
+          onChange={(e) => setCableRun((e.target.value || undefined) as CableRun | undefined)}
+          className="rounded-md bg-white/15 px-1.5 py-1 text-xs text-white outline-none"
+        >
+          <option value="" className="text-slate-900">
+            תוואי: לא צוין
+          </option>
+          {CABLE_RUNS.map((r) => (
+            <option key={r.id} value={r.id} className="text-slate-900">
+              {r.label}
+            </option>
+          ))}
+        </select>
+      )}
       {tool === "tray" && (
         <select
           value={trayType}
@@ -258,6 +275,7 @@ function ToolHint() {
 export function LayersPanel() {
   const { layers, toggleLayer, showLabels, setShowLabels, showCones, setShowCones } = useEditor();
   const { showStructure, setShowStructure, wallColorBy, setWallColorBy, assistantOpen, setAssistantOpen } = useEditor();
+  const { rackCollapse, setRackCollapse } = useEditor();
   const [open, setOpen] = useState(false);
   return (
     <div className="absolute end-3 top-3 z-20 flex flex-col items-end">
@@ -321,6 +339,10 @@ export function LayersPanel() {
               </div>
             </div>
           )}
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50">
+            <input type="checkbox" checked={!rackCollapse} onChange={(e) => setRackCollapse(!e.target.checked)} className="accent-slate-900" />
+            ציוד שבתוך ארונות בנפרד
+          </label>
           <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50">
             <input type="checkbox" checked={showLabels} onChange={(e) => setShowLabels(e.target.checked)} className="accent-slate-900" />
             הצג שמות

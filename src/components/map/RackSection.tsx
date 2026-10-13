@@ -10,7 +10,6 @@ import {
   RACK_DOORS,
   RACK_ITEMS,
   RACK_KINDS,
-  defaultRackSpec,
   firstFreeFromTop,
   fits,
   rackItemDef,
@@ -21,6 +20,7 @@ import {
 import type { Device, RackData, RackDoor, RackItem, RackItemKind, RackKind } from "@/lib/types";
 import { Button, Field, Input, Select, cx } from "../ui";
 import { Section } from "./panel-ui";
+import { rackDataOf } from "@/lib/rack-mount";
 
 /** Order in which nearby equipment is mounted, top to bottom. */
 const MOUNT_ORDER: RackItemKind[] = ["modem", "router", "firewall", "patch", "switch", "nvr", "server", "ups"];
@@ -34,11 +34,7 @@ export function RackSection({ d, ro, onGoto }: { d: Device; ro: boolean; onGoto:
   const [slot, setSlot] = useState<number | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
-  // older racks only had a "size" field
-  const rack: RackData = d.rack ?? {
-    spec: { ...defaultRackSpec(), units: Number(d.extra.size) || defaultRackSpec().units },
-    items: [],
-  };
+  const rack: RackData = rackDataOf(d);
   const { spec, items } = rack;
   const save = (r: RackData) => updateDevice(d.id, { rack: r });
   const setItems = (next: RackItem[]) => {

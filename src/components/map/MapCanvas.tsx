@@ -14,12 +14,15 @@ import { useEditor, type Selection, type SpacePreview } from "./editor-store";
 import { askConfirm, askText } from "../dialogs";
 import { StructureLayer, wallWidth } from "./StructureLayer";
 import { refAnchor, refFromSelection } from "./refs";
+import { mountInRack, mountProblem } from "@/lib/rack-mount";
+import { rackKindForDevice, usedUnits } from "@/lib/rack-catalog";
+import { toast } from "@/lib/toast";
 
 type View = { x: number; y: number; k: number };
 
 type Drag =
   | { type: "pan"; sx: number; sy: number; v: View; moved: boolean; pick?: Selection }
-  | { type: "device"; id: string; ox: number; oy: number; sx: number; sy: number; x: number; y: number; moved: boolean }
+  | { type: "device"; id: string; ox: number; oy: number; sx: number; sy: number; x: number; y: number; moved: boolean; overRack?: string }
   | { type: "note"; id: string; ox: number; oy: number; sx: number; sy: number; x: number; y: number; moved: boolean }
   | { type: "vertex"; linkId: string; index: number; insert: boolean; x: number; y: number }
   | { type: "areaVertex"; areaId: string; index: number; x: number; y: number }
@@ -223,8 +226,10 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     let best: Device | undefined;
     let bd = SNAP_PX * s;
     for (const d of devices) {
-      if (!layers[deviceTypeById(d.type).layer]) continue;
-      const dist = Math.hypot(d.x - p.x, d.y - p.y);
+      // equipment hidden inside a collapsed rack is reached through the rack
+      if (!layers[deviceTypeById(d.type).layer] || mountedIn.has(d.id)) continue;
+      const q = devPos(d);
+      const dist = Math.hypot(q.x - p.x, q.y - p.y);
       if (dist < bd) {
         bd = dist;
         best = d;
@@ -252,6 +257,7 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
         points: pts,
         a: drawing.a,
         b: end ? { deviceId: end.id } : undefined,
+        run: ed.cableRun,
       });
       ed.select({ kind: "link", id });
     } else if (tool === "tray") {
@@ -280,6 +286,33 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
   /** true if an existing wall already covers the segment a→b */
   const covered = (a: Point, b: Point) =>
     walls.some((w) => projectOnWall(a, w).dist < 2 && projectOnWall(b, w).dist < 2);
+
+  /**
+   * Nearest drawn cable under p: its route from the source end up to p (snapped to a corner when
+   * close). If p falls mid-segment, that corner is added to the existing cable too, so the shared
+   * part has identical corners and is counted as one bundle.
+   */
+  const branchFrom = (p: Point): { points: Point[]; a?: LinkEnd } | null => {
+    let best: { l: (typeof links)[number]; pts: Point[]; i: number; q: Point; d: number } | null = null;
+    for (const l of links) {
+      if (l.kind !== "cable" || !layers[l.layer]) continue;
+      const pts = linkPoints(l);
+      for (let i = 0; i < pts.length - 1; i++) {
+        const pr = projectOnWall(p, { a: pts[i], b: pts[i + 1] });
+        if (pr.dist < SNAP_PX * s && (!best || pr.dist < best.d)) best = { l, pts, i, q: pr.point, d: pr.dist };
+      }
+    }
+    if (!best) return null;
+    const { l, pts, i } = best;
+    const near = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y) < SNAP_PX * s;
+    if (near(best.q, pts[i])) return { points: pts.slice(0, i + 1), a: l.a };
+    if (near(best.q, pts[i + 1])) return { points: pts.slice(0, i + 2), a: l.a };
+    const q = { x: round(best.q.x), y: round(best.q.y) };
+    const withCorner = [...l.points];
+    withCorner.splice(i + 1, 0, q);
+    updateLink(l.id, { points: withCorner });
+    return { points: [...pts.slice(0, i + 1), q], a: l.a };
+  };
 
   const toolClick = (p: Point, onDevice?: Device, free = false) => {
     if (!canEdit && tool !== "measure") return;
@@ -362,7 +395,18 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
       case "cable": {
         const dev = onDevice ?? nearestDevice(p);
         if (!drawing) {
-          setDrawing(dev ? { points: [{ x: dev.x, y: dev.y }], a: { deviceId: dev.id } } : { points: [p] });
+          if (dev) {
+            setDrawing({ points: [{ x: devPos(dev).x, y: devPos(dev).y }], a: { deviceId: dev.id } });
+            return;
+          }
+          // starting on an existing cable: share its route from its source up to here, then go on
+          const br = branchFrom(p);
+          if (br) {
+            setDrawing({ points: br.points, a: br.a });
+            toast("ממשיך מהכבל הקיים: לחצו על נקודות בדרך ואז על הציוד ביעד");
+            return;
+          }
+          setDrawing({ points: [p] });
         } else if (dev && !(drawing.a?.deviceId === dev.id && drawing.points.length === 1)) {
           finishLine(dev);
         } else {
@@ -416,6 +460,9 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
 
   // ---- pointer handling ----
   const capture = (e: React.PointerEvent) => {
+    // a primary press (mouse, or the first finger) starts a fresh gesture: drop pointers whose
+    // release was never delivered, or every later click would be mistaken for a pinch
+    if (e.isPrimary) pointers.current.clear();
     try {
       svgRef.current?.setPointerCapture(e.pointerId);
     } catch {
@@ -457,6 +504,18 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     }
     if (tool === "cable" || tool === "tray") {
       toolClick({ x: d.x, y: d.y }, tool === "cable" ? d : undefined);
+      return;
+    }
+    if (tool === "place" && d.type === "rack" && canEdit && rackKindForDevice(ed.placeType)) {
+      // clicking a rack with rack-mountable equipment mounts it straight into the cabinet
+      const problem = mountProblem(ed.placeType, d);
+      if (problem) return toast(problem, "error");
+      const id = addDevice({ siteId: floor.siteId, floorId: floor.id, type: ed.placeType, x: d.x, y: d.y });
+      const r = mountInRack(id, d.id);
+      if (r.ok) {
+        toast(`"${useApp.getState().devices.find((x) => x.id === id)?.label}" הוכנס לארון "${d.label}" בחריץ U${r.u}`);
+        ed.select({ kind: "device", id: d.id });
+      }
       return;
     }
     toolClick(toWorld(e));
@@ -502,7 +561,14 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
         const x = drag.ox + (w.x - drag.sx);
         const y = drag.oy + (w.y - drag.sy);
         const moved = drag.moved || Math.hypot(x - drag.ox, y - drag.oy) > 3 * s;
-        setDrag({ ...drag, x, y, moved });
+        if (drag.type === "device") {
+          const dev = devices.find((d) => d.id === drag.id);
+          const over =
+            dev && rackKindForDevice(dev.type)
+              ? visibleDevices.find((r) => r.type === "rack" && r.id !== dev.id && Math.hypot(r.x - x, r.y - y) < 26 * s)
+              : undefined;
+          setDrag({ ...drag, x, y, moved, overRack: over?.id });
+        } else setDrag({ ...drag, x, y, moved });
         return;
       }
       case "vertex":
@@ -583,6 +649,16 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
         }
         break;
       case "device":
+        if (drag.moved && drag.overRack) {
+          const r = mountInRack(drag.id, drag.overRack);
+          const rack = devices.find((d) => d.id === drag.overRack);
+          const dev = devices.find((d) => d.id === drag.id);
+          if (r.ok) {
+            toast(`"${dev?.label}" הוכנס לארון "${rack?.label}" בחריץ U${r.u}`);
+            ed.select({ kind: "device", id: drag.overRack });
+          } else toast(r.reason, "error"); // stays where it was
+          break;
+        }
         if (drag.moved) moveDevice(drag.id, round(drag.x), round(drag.y));
         ed.select({ kind: "device", id: drag.id });
         break;
@@ -718,8 +794,12 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
   });
 
   // ---- derived positions during drag ----
-  const devPos = (d: Device): Point =>
+  const ownPos = (d: Device): Point =>
     drag?.type === "device" && drag.id === d.id ? { x: drag.x, y: drag.y } : { x: d.x, y: d.y };
+  const devPos = (d: Device): Point => {
+    const rack = mountedIn.get(d.id);
+    return rack ? ownPos(rack) : ownPos(d);
+  };
   const devById = new Map(devices.map((d) => [d.id, d]));
   const movePt = (q: Point) => {
     if (drag?.type === "wallEnd" && Math.hypot(q.x - drag.orig.x, q.y - drag.orig.y) < 0.5) return { x: drag.x, y: drag.y };
@@ -767,8 +847,66 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
 
   const trays = links.filter((l) => l.kind === "tray" && layers.infra);
   const cables = links.filter((l) => l.kind === "cable" && layers[l.layer]);
-  const visibleDevices = devices.filter((d) => layers[deviceTypeById(d.type).layer]);
+  // equipment mounted in a rack on this floor, drawn inside the rack while racks are collapsed
+  const mountedIn = new Map<string, Device>();
+  if (ed.rackCollapse) {
+    for (const r of devices) {
+      if (r.type !== "rack" || !r.rack) continue;
+      for (const i of r.rack.items) if (i.deviceId && devById.has(i.deviceId)) mountedIn.set(i.deviceId, r);
+    }
+  }
+  const visibleDevices = devices.filter((d) => layers[deviceTypeById(d.type).layer] && !mountedIn.has(d.id));
   const selectedLink = selection?.kind === "link" ? links.find((l) => l.id === selection.id) : undefined;
+  // segments shared by several drawn cables (identical corners), counted once per segment
+  const bundles = (() => {
+    const seg = new Map<string, { key: string; a: Point; b: Point; n: number }>();
+    const k = (p: Point) => `${Math.round(p.x)},${Math.round(p.y)}`;
+    for (const l of cables) {
+      const pts = linkPoints(l);
+      const seen = new Set<string>();
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [ka, kb] = [k(pts[i]), k(pts[i + 1])];
+        if (ka === kb) continue;
+        const key = ka < kb ? `${ka}|${kb}` : `${kb}|${ka}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const cur = seg.get(key);
+        if (cur) cur.n++;
+        else seg.set(key, { key, a: pts[i], b: pts[i + 1], n: 1 });
+      }
+    }
+    return [...seg.values()].filter((x) => x.n > 1);
+  })();
+  // devices with cables that rise from them into the ceiling
+  const ceilingExits = (() => {
+    const n = new Map<string, number>();
+    for (const l of cables) if (l.run === "ceiling" && l.a) n.set(l.a.deviceId, (n.get(l.a.deviceId) ?? 0) + 1);
+    // equipment mounted in a collapsed rack counts for the rack
+    const byShown = new Map<string, { dev: Device; n: number }>();
+    for (const [id, cnt] of n) {
+      const dev = mountedIn.get(id) ?? devById.get(id);
+      if (!dev) continue;
+      const cur = byShown.get(dev.id);
+      byShown.set(dev.id, { dev, n: (cur?.n ?? 0) + cnt });
+    }
+    return [...byShown.values()];
+  })();
+
+  // the red handle at the tip of the selected camera's view, for aiming it on the map
+  const camHandle = (() => {
+    if (!canEdit || tool !== "select" || !selectedDevice?.camera || selectedDevice.floorId !== floor.id) return null;
+    const cam = drag?.type === "cam" ? { ...selectedDevice.camera, dir: drag.dir, range: drag.range } : selectedDevice.camera;
+    const r = cam.range * (ppm ?? 40);
+    const p = devPos(selectedDevice);
+    return {
+      id: selectedDevice.id,
+      dir: cam.dir,
+      range: cam.range,
+      p,
+      hx: p.x + Math.cos((cam.dir * Math.PI) / 180) * r,
+      hy: p.y + Math.sin((cam.dir * Math.PI) / 180) * r,
+    };
+  })();
   const selectedArea = selection?.kind === "area" ? areas.find((a) => a.id === selection.id) : undefined;
 
   return (
@@ -972,16 +1110,43 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                   points={pts.map((p) => `${p.x},${p.y}`).join(" ")}
                   fill="none"
                   stroke={l.color || t.color}
-                  strokeWidth={hot ? 3.5 : 2.2}
+                  strokeWidth={hot ? 3.5 : l.run === "ceiling" ? 3.2 : 2.2}
                   strokeDasharray={t.dash}
                   strokeLinecap="round"
                   strokeLinejoin="round"
                   vectorEffect="non-scaling-stroke"
                 />
+                {l.run === "ceiling" && (
+                  // above the ceiling: a white dashed core inside the cable
+                  <polyline
+                    points={pts.map((p) => `${p.x},${p.y}`).join(" ")}
+                    fill="none"
+                    stroke="#fff"
+                    strokeWidth={1}
+                    strokeDasharray="5 4"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )}
                 <HitLine pts={pts} width={12} onDown={(e) => { e.stopPropagation(); onBackgroundDown(e, tool === "select" ? { kind: "link", id: l.id } : undefined); }} />
               </g>
             );
           })}
+
+          {/* cables sharing a route: count on each shared segment */}
+          {bundles.map((b) => (
+            <g key={b.key} pointerEvents="none">
+              <line x1={b.a.x} y1={b.a.y} x2={b.b.x} y2={b.b.y} stroke="#0f172a" strokeOpacity={0.12} strokeWidth={6 + b.n * 2} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+              {/* a third of the way along, clear of the selected cable's mid-segment handle */}
+              <g transform={`translate(${b.a.x + (b.b.x - b.a.x) / 3} ${b.a.y + (b.b.y - b.a.y) / 3}) scale(${s})`}>
+                <rect x={-13} y={-8} width={26} height={16} rx={8} fill="#0f172a" />
+                <text y={4} fontSize={10} fontWeight={700} fill="#fff" textAnchor="middle" direction="ltr">
+                  ×{b.n}
+                </text>
+              </g>
+            </g>
+          ))}
 
           {/* vertex handles for selected line */}
           {canEdit && tool === "select" && selectedLink && (
@@ -1067,50 +1232,81 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
             const Icon = def.icon;
             const p = devPos(d);
             const sel = selection?.kind === "device" && selection.id === d.id;
-            const inTrace = tracing && trace!.deviceIds.has(d.id);
+            // a collapsed rack stands in for the equipment inside it
+            const inside = d.type === "rack" ? [...mountedIn].filter(([, r]) => r.id === d.id).map(([id]) => id) : [];
+            const holdsSelected = selection?.kind === "device" && inside.includes(selection.id);
+            const inTrace = tracing && (trace!.deviceIds.has(d.id) || inside.some((id) => trace!.deviceIds.has(id)));
+            const dropTarget = drag?.type === "device" && drag.overRack === d.id;
+            const rackItems = d.type === "rack" ? (d.rack?.items ?? []) : [];
             return (
               <g
                 key={d.id}
-                transform={`translate(${p.x} ${p.y}) scale(${s * (sel ? 1 : ms)})`}
-                opacity={dimDevice(d.id) ? 0.3 : 1}
+                data-device={d.id}
+                transform={`translate(${p.x} ${p.y}) scale(${s * (sel || dropTarget ? 1 : ms)})`}
+                opacity={dimDevice(d.id) && !inTrace ? 0.3 : 1}
                 style={{ cursor: tool === "select" ? (canEdit ? "grab" : "pointer") : undefined }}
                 onPointerDown={(e) => onDeviceDown(e, d)}
               >
+                {dropTarget && (
+                  <>
+                    <circle r={27} fill="#22c55e" fillOpacity={0.15} stroke="#16a34a" strokeWidth={3} />
+                    <text y={-34} fontSize={11} fontWeight={700} textAnchor="middle" fill="#15803d" style={halo(1)}>
+                      שחרר כדי להכניס לארון
+                    </text>
+                  </>
+                )}
+                {holdsSelected && !sel && <circle r={20} fill="none" stroke="#2563eb" strokeWidth={3} strokeDasharray="4 3" />}
                 {(sel || inTrace) && <circle r={20} fill="none" stroke={sel ? "#2563eb" : "#facc15"} strokeWidth={sel ? 3 : 4} />}
                 <circle r={14} fill="#fff" stroke={color} strokeWidth={2.5} />
                 <Icon x={-8} y={-8} width={16} height={16} color={color} strokeWidth={2.2} />
+                {rackItems.length > 0 && (
+                  // how much is mounted in the cabinet
+                  <g transform="translate(13 -12)">
+                    <rect x={-11} y={-7} width={22} height={14} rx={7} fill="#0f172a" />
+                    <text y={3.5} fontSize={9} fontWeight={700} fill="#fff" textAnchor="middle">
+                      {rackItems.length}
+                    </text>
+                  </g>
+                )}
                 {(labelsVisible || sel || inTrace) && (
                   <text y={28} fontSize={11} fontWeight={sel ? 700 : 500} textAnchor="middle" fill="#0f172a" style={halo(1)}>
                     {d.label}
+                    {d.type === "rack" && d.rack ? ` · ${usedUnits(d.rack.items)}/${d.rack.spec.units}U` : ""}
                   </text>
                 )}
               </g>
             );
           })}
 
-          {/* camera direction handle */}
-          {canEdit && tool === "select" && selectedDevice?.camera && selectedDevice.floorId === floor.id && (() => {
-            const cam = drag?.type === "cam" ? { ...selectedDevice.camera, dir: drag.dir, range: drag.range } : selectedDevice.camera;
-            const r = cam.range * (ppm ?? 40);
-            const p = devPos(selectedDevice);
-            const hx = p.x + Math.cos((cam.dir * Math.PI) / 180) * r;
-            const hy = p.y + Math.sin((cam.dir * Math.PI) / 180) * r;
+          {/* cables going up into the ceiling from a device: "↑N" */}
+          {ceilingExits.map(({ dev, n }) => {
+            const p = devPos(dev);
             return (
-              <g>
-                <line x1={p.x} y1={p.y} x2={hx} y2={hy} stroke="#ef4444" strokeDasharray="4 3" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-                <circle
-                  cx={hx}
-                  cy={hy}
-                  r={7 * s}
-                  fill="#ef4444"
-                  stroke="#fff"
-                  strokeWidth={2 * s}
-                  style={{ cursor: "grab" }}
-                  onPointerDown={(e) => startCamDrag(e, selectedDevice.id, cam.dir, cam.range)}
-                />
+              <g key={`exit-${dev.id}`} transform={`translate(${p.x} ${p.y}) scale(${s})`} pointerEvents="none">
+                <rect x={-34} y={-30} width={26} height={15} rx={4} fill="#fff" stroke="#475569" strokeWidth={1} />
+                <text x={-21} y={-19} fontSize={10} fontWeight={700} fill="#0f172a" textAnchor="middle">
+                  ↑{n}
+                </text>
               </g>
             );
-          })()}
+          })}
+
+          {/* camera direction handle */}
+          {camHandle && (
+            <g>
+              <line x1={camHandle.p.x} y1={camHandle.p.y} x2={camHandle.hx} y2={camHandle.hy} stroke="#ef4444" strokeDasharray="4 3" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+              <circle
+                cx={camHandle.hx}
+                cy={camHandle.hy}
+                r={7 * s}
+                fill="#ef4444"
+                stroke="#fff"
+                strokeWidth={2 * s}
+                style={{ cursor: "grab" }}
+                onPointerDown={(e) => startCamDrag(e, camHandle.id, camHandle.dir, camHandle.range)}
+              />
+            </g>
+          )}
 
           {/* notes */}
           {notes.map((n) => {

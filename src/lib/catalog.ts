@@ -34,7 +34,7 @@ import {
   Zap,
   type LucideIcon,
 } from "lucide-react";
-import type { LayerId } from "./types";
+import type { CableRun, LayerId } from "./types";
 
 export interface LayerDef {
   id: LayerId;
@@ -473,6 +473,13 @@ export const TRAY_TYPES: CableTypeDef[] = [
 export const linkTypeById = (id: string): CableTypeDef =>
   [...CABLE_TYPES, ...TRAY_TYPES].find((c) => c.id === id) ??
   CABLE_TYPES[CABLE_TYPES.length - 1];
+
+export const CABLE_RUNS: { id: CableRun; label: string }[] = [
+  { id: "ceiling", label: "מעל התקרה" },
+  { id: "wall", label: "בתוך הקיר" },
+  { id: "floor", label: "ברצפה" },
+  { id: "exposed", label: "גלוי / בתעלה" },
+];
 
 export const AREA_COLORS = [
   "#60a5fa",

@@ -33,7 +33,7 @@ export const rackItemDef = (k: RackItemKind) => RACK_ITEMS.find((r) => r.kind ==
 export const rackKindForDevice = (type: string): RackItemKind | undefined => RACK_ITEMS.find((r) => r.deviceType === type)?.kind;
 
 export const RACK_KINDS: { id: RackKind; label: string; sizes: number[] }[] = [
-  { id: "wall", label: "ארון תלוי (קיר)", sizes: [6, 9, 12, 15, 18, 22] },
+  { id: "wall", label: "ארון תלוי (קיר)", sizes: [4, 6, 9, 10, 12, 15, 18, 22] },
   { id: "floor", label: "ארון עומד (רצפה)", sizes: [22, 27, 32, 37, 42, 47] },
   { id: "open", label: "מסגרת פתוחה", sizes: [12, 18, 24, 32, 42, 47] },
 ];

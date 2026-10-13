@@ -8,11 +8,13 @@ import {
   Eye,
   EyeOff,
   Plus,
+  Server,
   Trash2,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { storeImageFile, useImageSrc, deleteImage } from "@/lib/images";
 import {
+  CABLE_RUNS,
   CABLE_TYPES,
   DEVICE_TYPES,
   LAYERS,
@@ -23,8 +25,9 @@ import {
 } from "@/lib/catalog";
 import { linkLengthM, traceDevice } from "@/lib/graph";
 import { camerasPrivacyHits } from "@/lib/space";
+import { rackOf } from "@/lib/rack-mount";
 import { DEFAULT_PPM } from "@/lib/space-catalog";
-import type { Device, Link } from "@/lib/types";
+import type { CableRun, Device, Link } from "@/lib/types";
 import { Button, Field, Input, Modal, Select, Textarea, cx } from "../ui";
 import { useEditor } from "./editor-store";
 import { PanelHeader, Section } from "./panel-ui";
@@ -101,6 +104,8 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
           </div>
         </div>
       </PanelHeader>
+
+      <MountedIn d={d} onGoto={onGoto} />
 
       {/* trace */}
       {trace && trace.steps.length > 1 && (
@@ -310,6 +315,26 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
           </Button>
         )}
       </div>
+    </div>
+  );
+}
+
+/** "In rack X · U10" for equipment mounted in a comms rack. */
+function MountedIn({ d, onGoto }: { d: Device; onGoto: (id: string) => void }) {
+  const devices = useApp((s) => s.devices);
+  const m = rackOf(d.id, devices);
+  if (!m) return null;
+  const { rack, item } = m;
+  return (
+    <div className="mx-4 mt-3 flex items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 text-sm ring-1 ring-slate-200">
+      <Server size={15} className="text-slate-500" />
+      <span className="flex-1">
+        בתוך <b>{rack.label}</b> · U{item.u}
+        {item.height > 1 ? `–U${item.u + item.height - 1}` : ""}
+      </span>
+      <button onClick={() => onGoto(rack.id)} className="text-xs font-medium text-blue-600 hover:underline">
+        פתח ארון
+      </button>
     </div>
   );
 }
@@ -695,6 +720,16 @@ function LinkPanel({ id, canEdit, onGoto, onClose }: PanelProps & { id: string; 
           <>
             {endEditor("a", "צד א׳")}
             {endEditor("b", "צד ב׳")}
+            <Field label="תוואי">
+              <Select value={l.run ?? ""} disabled={ro} onChange={(e) => updateLink(l.id, { run: (e.target.value || undefined) as CableRun | undefined })}>
+                <option value="">לא צוין</option>
+                {CABLE_RUNS.map((r) => (
+                  <option key={r.id} value={r.id}>
+                    {r.label}
+                  </option>
+                ))}
+              </Select>
+            </Field>
             <div className="grid grid-cols-2 gap-3">
               <Field label="צבע מעטה">
                 <div className="flex items-center gap-2">

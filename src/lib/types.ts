@@ -190,7 +190,11 @@ export interface Link {
   b?: LinkEnd;
   /** manual length override in meters */
   lengthM?: number;
+  /** where the cable physically runs */
+  run?: CableRun;
 }
+
+export type CableRun = "ceiling" | "wall" | "floor" | "exposed";
 
 // ---------------------------------------------------------------- space model
 

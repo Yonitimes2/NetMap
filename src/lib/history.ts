@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { create } from "zustand";
 import { useApp, type AppState } from "./store";
+import { toast } from "./toast";
 
 /**
  * Undo / redo for every data change in the app (not for chat, audit log or the current user).
@@ -60,9 +61,7 @@ let tickOpen = false;
 const MAX = 100;
 const MERGE_MS = 1200;
 
-export const useHistory = create<{ undoLabel?: string; redoLabel?: string; flash: { text: string; n: number } | null }>(() => ({
-  flash: null,
-}));
+export const useHistory = create<{ undoLabel?: string; redoLabel?: string }>(() => ({}));
 
 const publish = () =>
   useHistory.setState({ undoLabel: past[past.length - 1]?.label, redoLabel: future[future.length - 1]?.label });
@@ -124,8 +123,7 @@ function restore(from: Entry[], to: Entry[], verb: string) {
   } finally {
     applying = false;
   }
-  const n = (useHistory.getState().flash?.n ?? 0) + 1;
-  useHistory.setState({ flash: { text: `${verb}: ${e.label}`, n } });
+  toast(`${verb}: ${e.label}`);
   publish();
 }
 

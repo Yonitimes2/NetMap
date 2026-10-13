@@ -1,7 +1,7 @@
 "use client";
 
 import { create } from "zustand";
-import type { LayerId, ObstacleKind, OpeningKind, Point, WallType } from "@/lib/types";
+import type { CableRun, LayerId, ObstacleKind, OpeningKind, Point, WallType } from "@/lib/types";
 
 /** What the assistant has written so far, drawn on the map while it is still working. */
 export interface SpacePreview {
@@ -42,12 +42,16 @@ interface EditorState {
   placeType: string;
   cableType: string;
   trayType: string;
+  /** run given to newly drawn cables */
+  cableRun: CableRun | undefined;
   wallType: WallType;
   openingKind: OpeningKind;
   obstacleKind: ObstacleKind;
   /** color walls by material, or by cable pass-through status */
   wallColorBy: "type" | "pass";
   showStructure: boolean;
+  /** equipment mounted in a rack is drawn inside the rack's marker instead of on its own */
+  rackCollapse: boolean;
   assistantOpen: boolean;
   /** which tab the side panel shows when both the assistant and a selection are open */
   sideTab: "assistant" | "details";
@@ -68,11 +72,13 @@ interface EditorState {
   setPlaceType: (t: string) => void;
   setCableType: (t: string) => void;
   setTrayType: (t: string) => void;
+  setCableRun: (r: CableRun | undefined) => void;
   setWallType: (t: WallType) => void;
   setOpeningKind: (k: OpeningKind) => void;
   setObstacleKind: (k: ObstacleKind) => void;
   setWallColorBy: (v: "type" | "pass") => void;
   setShowStructure: (v: boolean) => void;
+  setRackCollapse: (v: boolean) => void;
   setAssistantOpen: (v: boolean) => void;
   setSideTab: (t: "assistant" | "details") => void;
   setPreview: (p: SpacePreview | null) => void;
@@ -104,11 +110,13 @@ export const useEditor = create<EditorState>((set) => ({
   placeType: "cam-dome",
   cableType: "cat6",
   trayType: "tray",
+  cableRun: undefined,
   wallType: "drywall",
   openingKind: "door",
   obstacleKind: "column",
   wallColorBy: "type",
   showStructure: true,
+  rackCollapse: true,
   assistantOpen: false,
   sideTab: "details",
   preview: null,
@@ -124,11 +132,13 @@ export const useEditor = create<EditorState>((set) => ({
   setPlaceType: (placeType) => set({ placeType, tool: "place" }),
   setCableType: (cableType) => set({ cableType }),
   setTrayType: (trayType) => set({ trayType }),
+  setCableRun: (cableRun) => set({ cableRun }),
   setWallType: (wallType) => set({ wallType }),
   setOpeningKind: (openingKind) => set({ openingKind }),
   setObstacleKind: (obstacleKind) => set({ obstacleKind }),
   setWallColorBy: (wallColorBy) => set({ wallColorBy }),
   setShowStructure: (showStructure) => set({ showStructure }),
+  setRackCollapse: (rackCollapse) => set({ rackCollapse }),
   setAssistantOpen: (assistantOpen) => set(assistantOpen ? { assistantOpen, sideTab: "assistant" } : { assistantOpen }),
   setSideTab: (sideTab) => set({ sideTab }),
   setPreview: (preview) => set({ preview }),
