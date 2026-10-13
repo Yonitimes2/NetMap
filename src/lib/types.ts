@@ -110,7 +110,60 @@ export interface Device {
   extra: Record<string, string>;
   ports?: number;
   camera?: CameraView;
+  /** only on comms racks: the cabinet's build and what is mounted in it */
+  rack?: RackData;
   updatedAt: number;
+}
+
+// ---------------------------------------------------------------- comms rack
+
+export type RackKind = "wall" | "floor" | "open";
+export type RackDoor = "glass" | "perforated" | "solid" | "none";
+
+export interface RackSpec {
+  kind: RackKind;
+  /** height in rack units (1U = 44.45 mm) */
+  units: number;
+  widthMm: number;
+  depthMm: number;
+  door?: RackDoor;
+  lock?: boolean;
+  fans?: boolean;
+  pdu?: boolean;
+}
+
+export type RackItemKind =
+  | "patch"
+  | "switch"
+  | "router"
+  | "firewall"
+  | "modem"
+  | "nvr"
+  | "server"
+  | "ups"
+  | "shelf"
+  | "cable-mgr"
+  | "pdu"
+  | "fan"
+  | "blank"
+  | "other";
+
+export interface RackItem {
+  id: string;
+  kind: RackItemKind;
+  label: string;
+  /** lowest rack unit it occupies (1 = bottom of the cabinet) */
+  u: number;
+  /** height in rack units */
+  height: number;
+  /** equipment on the map this slot holds */
+  deviceId?: string;
+  notes?: string;
+}
+
+export interface RackData {
+  spec: RackSpec;
+  items: RackItem[];
 }
 
 export interface LinkEnd {

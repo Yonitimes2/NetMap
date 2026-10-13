@@ -28,6 +28,7 @@ import type { Device, Link } from "@/lib/types";
 import { Button, Field, Input, Modal, Select, Textarea, cx } from "../ui";
 import { useEditor } from "./editor-store";
 import { PanelHeader, Section } from "./panel-ui";
+import { RackSection } from "./RackSection";
 import { askConfirm } from "../dialogs";
 import { ObstaclePanel, OpeningPanel, RoomPanel, WallPanel } from "./StructurePanels";
 
@@ -198,6 +199,8 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
           </div>
         )}
       </Section>
+
+      {d.type === "rack" && <RackSection d={d} ro={ro} onGoto={onGoto} />}
 
       {def.network && (
         <Section

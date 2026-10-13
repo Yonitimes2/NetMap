@@ -14,6 +14,7 @@ import type {
   Obstacle,
   Opening,
   Point,
+  RackData,
   Site,
   User,
   Wall,
@@ -35,6 +36,22 @@ export interface AppData {
   obstacles: Obstacle[];
   /** space-assistant chat per floor */
   chats: Record<string, ChatMessage[]>;
+}
+
+/** The demo office's 12U wall cabinet, holding the equipment drawn next to it on the map. */
+export function demoRack(): RackData {
+  return {
+    spec: { kind: "wall", units: 12, widthMm: 600, depthMm: 450, door: "glass", lock: true, fans: true, pdu: true },
+    items: [
+      { id: "rk-1", kind: "patch", label: "פאנל A", u: 12, height: 1, deviceId: "a-patch" },
+      { id: "rk-2", kind: "cable-mgr", label: "מסדר כבלים", u: 11, height: 1 },
+      { id: "rk-3", kind: "switch", label: "סוויץ' PoE ראשי", u: 10, height: 1, deviceId: "a-switch" },
+      { id: "rk-4", kind: "router", label: "ראוטר ראשי", u: 9, height: 1, deviceId: "a-router" },
+      { id: "rk-5", kind: "modem", label: "מודם סיבים (על מדף)", u: 8, height: 1, deviceId: "a-modem" },
+      { id: "rk-6", kind: "nvr", label: "NVR ראשי", u: 6, height: 2, deviceId: "a-nvr" },
+      { id: "rk-7", kind: "ups", label: "UPS ארון", u: 1, height: 2, deviceId: "a-ups" },
+    ],
+  };
 }
 
 export function demoData(): AppData {
@@ -139,7 +156,8 @@ export function demoData(): AppData {
     extra: { isp: "פרטנר", wanIp: "79.180.12.44", ssid: "Cohen-Office", dhcpRange: "192.168.1.100-200" },
   });
   dev("a-rack", F3, S, "rack", 1455, 170, "ארון תקשורת ראשי", {
-    extra: { size: "12", location: "חדר שרתים", key: "מפתח אצל יעל בקבלה" },
+    extra: { location: "חדר שרתים", key: "מפתח אצל יעל בקבלה" },
+    rack: demoRack(),
   });
   dev("a-switch", F3, S, "switch", 1395, 250, "סוויץ' PoE ראשי", {
     manufacturer: "TP-Link",

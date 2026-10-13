@@ -91,7 +91,6 @@ export const DEVICE_TYPES: DeviceTypeDef[] = [
     layer: "network",
     icon: Server,
     fields: [
-      { key: "size", label: "גודל (U)", type: "number" },
       { key: "location", label: "מיקום / חדר" },
       { key: "key", label: "מפתח / גישה לארון" },
     ],

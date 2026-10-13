@@ -5,7 +5,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import { createStore, del, get, set as idbSet, type UseStore } from "idb-keyval";
 import { deviceTypeById } from "./catalog";
-import { demoData, type AppData } from "./demo";
+import { demoData, demoRack, type AppData } from "./demo";
 import { demoPlanningFloor } from "./demo-space";
 import type {
   Account,
@@ -409,7 +409,7 @@ export const useApp = create<AppState>()(
     },
     {
       name: "netmap",
-      version: 2,
+      version: 3,
       migrate: (persisted, version) => {
         const s = persisted as Partial<AppData>;
         if (version < 2) {
@@ -426,6 +426,16 @@ export const useApp = create<AppState>()(
             s.obstacles = [...s.obstacles, ...p.obstacles];
             s.areas = [...(s.areas ?? []), ...p.areas];
           }
+        }
+        if (version < 3) {
+          // demo office rack gets its cabinet build and mounted equipment
+          s.devices = s.devices?.map((d) => {
+            if (d.id !== "a-rack" || d.rack) return d;
+            const ids = new Set(s.devices!.map((x) => x.id));
+            const rack = demoRack();
+            rack.items = rack.items.map((i) => (i.deviceId && !ids.has(i.deviceId) ? { ...i, deviceId: undefined } : i));
+            return { ...d, rack };
+          });
         }
         return s as AppState;
       },
