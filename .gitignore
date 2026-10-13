@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# copied from pdfjs-dist on install
+/public/pdf.worker.min.mjs
+!.env.local.example
+
+# local dev bridge between the space assistant and a Claude Code session
+/.netmap-bridge/
