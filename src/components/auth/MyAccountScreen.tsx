@@ -6,6 +6,7 @@ import { useState, type FormEvent, type ReactNode } from "react";
 import { AppShell } from "../AppShell";
 import { Badge, Button, Field, Input } from "../ui";
 import { PasswordInput } from "./PasswordInput";
+import { InstallApp } from "../InstallApp";
 import { toast } from "@/lib/toast";
 import { AUTH_ROLE_LABEL, PASSWORD_MIN, authApi, useSession, type SessionUser } from "@/lib/session-client";
 import { signOut } from "@/lib/sync";
@@ -43,6 +44,7 @@ export function MyAccountScreen() {
             </div>
             <DetailsForm key={user.id} user={user} />
             <PasswordForm />
+            <InstallApp variant="card" />
           </>
         )}
       </div>

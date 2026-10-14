@@ -33,6 +33,10 @@ export interface ChatRef {
   rect?: { x1: number; y1: number; x2: number; y2: number };
 }
 
+/** Heights of the details / assistant sheet on phones, as a share of the area under the strip (map + sheet + tool bar). */
+export const SHEET_SNAPS = { peek: 0.3, half: 0.5, full: 0.8 } as const;
+export type SheetSnap = keyof typeof SHEET_SNAPS;
+
 export type Selection =
   | { kind: "device" | "link" | "area" | "note" | "wall" | "opening" | "obstacle"; id: string }
   | null;
@@ -68,6 +72,21 @@ interface EditorState {
   focus: { id: string; n: number } | null;
   /** fit-to-screen request counter */
   fitN: number;
+  /** phones: height of the bottom sheet the user chose */
+  sheet: SheetSnap;
+  /** phones: measured heights (px) of the bottom tool bar and the open sheet */
+  barH: number;
+  sheetH: number;
+  setSheet: (v: SheetSnap) => void;
+  /** points of the line being drawn (0 = none), published by the map so the phone tool bar can show "סיום" */
+  drawingN: number;
+  /** a region corner is placed and the second one is awaited (marking an area for the assistant) */
+  regionStarted: boolean;
+  /** requests from the phone tool bar to the map: finish / cancel the line being drawn */
+  finishReq: number;
+  cancelReq: number;
+  requestFinish: () => void;
+  requestCancel: () => void;
   setTool: (t: Tool) => void;
   setPlaceType: (t: string) => void;
   setCableType: (t: string) => void;
@@ -128,6 +147,16 @@ export const useEditor = create<EditorState>((set) => ({
   showCones: true,
   focus: null,
   fitN: 0,
+  sheet: "half",
+  barH: 0,
+  sheetH: 0,
+  setSheet: (sheet) => set({ sheet }),
+  drawingN: 0,
+  regionStarted: false,
+  finishReq: 0,
+  cancelReq: 0,
+  requestFinish: () => set((s) => ({ finishReq: s.finishReq + 1 })),
+  requestCancel: () => set((s) => ({ cancelReq: s.cancelReq + 1 })),
   setTool: (tool) => set({ tool }),
   setPlaceType: (placeType) => set({ placeType, tool: "place" }),
   setCableType: (cableType) => set({ cableType }),

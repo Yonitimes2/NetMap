@@ -59,7 +59,7 @@ export function ImportLocalData() {
     <>
       <div className="mb-4 flex flex-wrap items-center gap-3 rounded-2xl bg-blue-50 p-4 ring-1 ring-blue-100">
         <CloudUpload size={22} className="shrink-0 text-blue-600" />
-        <div className="min-w-0 flex-1 text-sm">
+        <div className="min-w-[200px] flex-1 text-sm">
           <div className="font-medium text-blue-900">בדפדפן הזה יש {pending.length === 1 ? "עסק אחד" : `${pending.length} עסקים`} שעוד לא נמצאים בשרת</div>
           <div className="text-blue-800/80">הם נשמרו כאן לפני שהנתונים עברו לשרת. אחרי ההעלאה יראו אותם מכל מכשיר.</div>
         </div>

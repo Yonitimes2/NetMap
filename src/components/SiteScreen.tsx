@@ -2,17 +2,18 @@
 
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { FileUp, List, Map as MapIcon, Plus, Search, Settings2, Sparkles, Trash2, Waypoints } from "lucide-react";
+import { Camera, ChevronDown, FileUp, Layers3, List, Map as MapIcon, Plus, Search, Settings2, Sparkles, Trash2, Waypoints } from "lucide-react";
 import { AppShell } from "./AppShell";
 import { Button, Empty, Field, Input, Modal, cx } from "./ui";
 import { MapCanvas } from "./map/MapCanvas";
 import { LayersPanel, Toolbar } from "./map/Toolbar";
 import { DetailsPanel } from "./map/DetailsPanel";
 import { SpaceAssistant } from "./map/SpaceAssistant";
-import { useEditor } from "./map/editor-store";
+import { SHEET_SNAPS, useEditor, type SheetSnap } from "./map/editor-store";
 import { useApp } from "@/lib/store";
 import { can, useRole } from "@/lib/access";
 import { useSync } from "@/lib/sync";
+import { useIsPhone, useLandscapePhone } from "@/lib/use-media";
 import { deviceTypeById, layerById, linkTypeById } from "@/lib/catalog";
 import { linkLengthM } from "@/lib/graph";
 import { pdfPageCount, storeImageFile, storePdfPage } from "@/lib/images";
@@ -59,6 +60,8 @@ function SiteBody({ accountId, siteId }: { accountId: string; siteId: string }) 
   const assistantOpen = useEditor((s) => s.assistantOpen);
   const setAssistantOpen = useEditor((s) => s.setAssistantOpen);
   const allWalls = useApp((s) => s.walls);
+  const phone = useIsPhone();
+  const landscape = useLandscapePhone();
 
   useEffect(() => resetEditor(), [siteId, resetEditor]);
 
@@ -86,7 +89,7 @@ function SiteBody({ accountId, siteId }: { accountId: string; siteId: string }) 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
       {/* sub header: floors + view mode + search */}
-      <div className="z-20 flex shrink-0 flex-wrap items-center gap-2 border-b border-slate-200 bg-white px-2 py-1.5 sm:flex-nowrap sm:px-3">
+      <div className={cx("relative z-20 flex shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-2 py-1.5 sm:px-3", phone ? "flex-nowrap" : "flex-wrap sm:flex-nowrap")}>
         <div className="flex shrink-0 rounded-lg bg-slate-100 p-0.5">
           {(
             [
@@ -105,7 +108,20 @@ function SiteBody({ accountId, siteId }: { accountId: string; siteId: string }) 
             </button>
           ))}
         </div>
-        {mode === "map" && (
+        {mode === "map" && phone && floor && (
+          <FloorPicker
+            floors={floors}
+            current={floor}
+            canEdit={canEdit}
+            onPick={setFloorId}
+            onSettings={setFloorSettings}
+            onAdd={async () => {
+              const name = await askText({ title: "קומה / אזור חדש", label: "שם הקומה או האזור", value: `קומה ${floors.length + 1}` });
+              if (name?.trim()) setFloorId(addFloor(siteId, name.trim()));
+            }}
+          />
+        )}
+        {mode === "map" && !phone && (
           <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
             {floors.map((f) => (
               <button
@@ -143,18 +159,64 @@ function SiteBody({ accountId, siteId }: { accountId: string; siteId: string }) 
             )}
           </div>
         )}
-        {mode !== "map" && <div className="flex-1" />}
-        <SiteSearch siteId={siteId} onPick={gotoDevice} />
+        {(mode !== "map" || (phone && !floor)) && <div className="flex-1" />}
+        <SiteSearch siteId={siteId} onPick={gotoDevice} compact={phone} />
+        {phone && mode === "map" && floor && (
+          <button
+            onClick={() => setAssistantOpen(!assistantOpen)}
+            className={cx("grid size-9 shrink-0 place-items-center rounded-lg", assistantOpen ? "bg-violet-600 text-white" : "text-violet-700 hover:bg-violet-50")}
+            aria-label="עוזר שטח"
+            aria-pressed={assistantOpen}
+          >
+            <Sparkles size={18} />
+          </button>
+        )}
       </div>
 
-      {mode === "map" && floor && (
+      {mode === "map" && floor && phone && (
+        // phones: map, sheet and tool bar are rows of their own; nothing is drawn on top of the map.
+        // Held sideways, the details open in a column beside the map instead.
+        <div className={cx("flex min-h-0 flex-1", landscape ? "flex-row" : "flex-col")}>
+          {/* sideways: map + tool bar in one column; upright the wrapper drops out of the layout */}
+          <div className={landscape ? "flex min-h-0 min-w-0 flex-1 flex-col" : "contents"}>
+          <div className="relative min-h-0 flex-1">
+            <MapCanvas key={floor.id} floor={floor} canEdit={canEdit} />
+            {!floor.plan && canEdit && !assistantOpen && !selection && !allWalls.some((w) => w.floorId === floor.id) && (
+              <div className="absolute inset-x-4 top-1/2 flex -translate-y-1/2 flex-col gap-2 rounded-2xl bg-white p-4 text-center shadow-sm ring-1 ring-slate-200">
+                <p className="text-sm text-slate-600">הקומה עדיין ריקה. אפשר לתאר אותה לעוזר, להעלות או לצלם תוכנית, או לצייר קירות בכלי ״מבנה״.</p>
+                <Button variant="primary" className="bg-violet-600 hover:bg-violet-700" onClick={() => setAssistantOpen(true)}>
+                  <Sparkles size={16} /> תאר את השטח לעוזר
+                </Button>
+                <Button onClick={() => setFloorSettings(floor)}>
+                  <FileUp size={16} /> העלה או צלם תוכנית
+                </Button>
+              </div>
+            )}
+          </div>
+          {!landscape && (selection || assistantOpen) && (
+            <SidePanel
+              details={selection ? <DetailsPanel accountId={accountId} canEdit={canEdit} onGoto={gotoDevice} /> : null}
+              assistant={assistantOpen ? <SpaceAssistant key={`assistant-${floor.id}`} floor={floor} canEdit={canEdit} /> : null}
+            />
+          )}
+          <Toolbar canEdit={canEdit} />
+          </div>
+          {landscape && (selection || assistantOpen) && (
+            <SidePanel
+              details={selection ? <DetailsPanel accountId={accountId} canEdit={canEdit} onGoto={gotoDevice} /> : null}
+              assistant={assistantOpen ? <SpaceAssistant key={`assistant-${floor.id}`} floor={floor} canEdit={canEdit} /> : null}
+            />
+          )}
+        </div>
+      )}
+      {mode === "map" && floor && !phone && (
         <div className="relative flex min-h-0 flex-1">
           <div className="relative min-w-0 flex-1">
             <MapCanvas key={floor.id} floor={floor} canEdit={canEdit} />
             <Toolbar canEdit={canEdit} />
             <LayersPanel />
             {!floor.plan && canEdit && !assistantOpen && !allWalls.some((w) => w.floorId === floor.id) && (
-              <div className="absolute bottom-6 left-1/2 flex -translate-x-1/2 flex-wrap justify-center gap-2">
+              <div className="absolute bottom-6 left-1/2 flex w-max max-w-[calc(100%-24px)] -translate-x-1/2 flex-wrap justify-center gap-2">
                 <Button variant="primary" className="bg-violet-600 hover:bg-violet-700" onClick={() => setAssistantOpen(true)}>
                   <Sparkles size={16} /> תאר את השטח לעוזר
                 </Button>
@@ -186,18 +248,20 @@ function SiteBody({ accountId, siteId }: { accountId: string; siteId: string }) 
 }
 
 /**
- * One side panel for the selection details and the space assistant: a column next to the map on
+ * One panel for the selection details and the space assistant: a column next to the map on
  * desktop, a bottom sheet on phones. When both are open they share it as tabs, so the map is never covered.
  */
 function SidePanel({ details, assistant }: { details: React.ReactNode; assistant: React.ReactNode }) {
   const sideTab = useEditor((s) => s.sideTab);
   const setSideTab = useEditor((s) => s.setSideTab);
   const select = useEditor((s) => s.select);
+  const setAssistantOpen = useEditor((s) => s.setAssistantOpen);
+  const phone = useIsPhone();
+  const landscape = useLandscapePhone();
   const both = !!details && !!assistant;
   const show = both ? sideTab : assistant ? "assistant" : "details";
-  return (
-    <aside className="absolute inset-x-0 bottom-0 z-30 flex h-[65%] flex-col overflow-hidden rounded-t-2xl bg-white shadow-[0_-8px_30px_rgba(0,0,0,0.12)] md:static md:h-auto md:w-[400px] md:shrink-0 md:rounded-none md:border-s md:border-slate-200 md:shadow-none">
-      <div className="mx-auto mt-2 h-1 w-10 shrink-0 rounded-full bg-slate-300 md:hidden" />
+  const body = (
+    <>
       {both && (
         <div className="flex shrink-0 gap-1 border-b border-slate-200 px-2 pt-2">
           {(
@@ -236,15 +300,91 @@ function SidePanel({ details, assistant }: { details: React.ReactNode; assistant
       {/* both stay mounted so a running assistant request isn't cancelled by switching tabs */}
       {assistant && <div className={cx("min-h-0 flex-1 flex-col", show === "assistant" ? "flex" : "hidden")}>{assistant}</div>}
       {details && <div className={cx("min-h-0 flex-1 flex-col", show === "details" ? "flex" : "hidden")}>{details}</div>}
+    </>
+  );
+  if (phone && !landscape) {
+    return <PhoneSheet onClose={() => (show === "details" ? select(null) : setAssistantOpen(false))}>{body}</PhoneSheet>;
+  }
+  return <aside className={cx("flex shrink-0 flex-col overflow-hidden border-s border-slate-200 bg-white", landscape ? "w-[45%]" : "w-[400px]")}>{body}</aside>;
+}
+
+/**
+ * Phones: a sheet between the map and the tool bar (the map shrinks; nothing is covered). Drag its
+ * handle between three heights, or down to close it; tapping the handle switches half / full height.
+ */
+function PhoneSheet({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  const snap = useEditor((s) => s.sheet);
+  const setSheet = useEditor((s) => s.setSheet);
+  const ref = useRef<HTMLElement>(null);
+  const start = useRef<{ y: number; h: number; avail: number; moved: boolean } | null>(null);
+  const [live, setLive] = useState<number | null>(null);
+
+  // the map uses this to keep the selected item in view when the sheet changes height
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => useEditor.setState({ sheetH: el.offsetHeight }));
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      useEditor.setState({ sheetH: 0 });
+    };
+  }, []);
+
+  const onDown = (e: React.PointerEvent) => {
+    const el = ref.current;
+    if (!el?.parentElement) return;
+    start.current = { y: e.clientY, h: el.offsetHeight, avail: el.parentElement.clientHeight, moved: false };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onMove = (e: React.PointerEvent) => {
+    const st = start.current;
+    if (!st) return;
+    const dy = st.y - e.clientY;
+    if (!st.moved && Math.abs(dy) < 6) return;
+    st.moved = true;
+    setLive(Math.max(48, Math.min(st.avail * SHEET_SNAPS.full, st.h + dy)));
+  };
+  const onUp = () => {
+    const st = start.current;
+    start.current = null;
+    if (!st) return;
+    if (!st.moved) return setSheet(snap === "full" ? "half" : "full");
+    const frac = (live ?? st.h) / st.avail;
+    setLive(null);
+    if (frac < SHEET_SNAPS.peek * 0.6) return onClose();
+    const nearest = (Object.keys(SHEET_SNAPS) as SheetSnap[]).reduce((a, b) => (Math.abs(SHEET_SNAPS[b] - frac) < Math.abs(SHEET_SNAPS[a] - frac) ? b : a));
+    setSheet(nearest);
+  };
+
+  return (
+    <aside
+      ref={ref}
+      className={cx("flex shrink-0 flex-col overflow-hidden rounded-t-2xl border-t border-slate-200 bg-white shadow-[0_-6px_20px_rgba(0,0,0,0.08)]", live === null && "transition-[height] duration-200")}
+      style={{ height: live ?? `${SHEET_SNAPS[snap] * 100}%` }}
+    >
+      <div
+        className="flex h-6 shrink-0 cursor-grab touch-none items-center justify-center"
+        onPointerDown={onDown}
+        onPointerMove={onMove}
+        onPointerUp={onUp}
+        onPointerCancel={onUp}
+        role="button"
+        aria-label="גרירה לשינוי גובה"
+      >
+        <span className="h-1.5 w-12 rounded-full bg-slate-300" />
+      </div>
+      {children}
     </aside>
   );
 }
 
-function SiteSearch({ siteId, onPick }: { siteId: string; onPick: (id: string) => void }) {
+function SiteSearch({ siteId, onPick, compact }: { siteId: string; onPick: (id: string) => void; compact?: boolean }) {
   const devices = useApp((s) => s.devices);
   const floors = useApp((s) => s.floors);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const results = useMemo(() => {
     const t = q.trim().toLowerCase();
     if (!t) return [];
@@ -257,22 +397,45 @@ function SiteSearch({ siteId, onPick }: { siteId: string; onPick: (id: string) =
       )
       .slice(0, 12);
   }, [q, devices, siteId]);
+  if (compact && !expanded) {
+    return (
+      <button onClick={() => setExpanded(true)} className="grid size-9 shrink-0 place-items-center rounded-lg text-slate-600 hover:bg-slate-100" aria-label="חיפוש ציוד">
+        <Search size={18} />
+      </button>
+    );
+  }
   return (
-    <div className="relative order-last w-full sm:order-none sm:w-64 sm:shrink-0">
-      <Search size={15} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
-      <Input
-        value={q}
-        onChange={(e) => {
-          setQ(e.target.value);
-          setOpen(true);
-        }}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setTimeout(() => setOpen(false), 150)}
-        placeholder="חיפוש: שם, IP, MAC, נקודה…"
-        className="h-8 ps-8"
-      />
+    <div className={compact ? "absolute inset-0 z-30 flex items-center gap-2 bg-white px-2" : "relative order-last w-full sm:order-none sm:w-64 sm:shrink-0"}>
+      <div className="relative min-w-0 flex-1">
+        <Search size={15} className="pointer-events-none absolute start-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+        <Input
+          value={q}
+          autoFocus={compact}
+          type="search"
+          enterKeyHint="search"
+          onChange={(e) => {
+            setQ(e.target.value);
+            setOpen(true);
+          }}
+          onFocus={() => setOpen(true)}
+          onBlur={() => setTimeout(() => setOpen(false), 150)}
+          placeholder="חיפוש: שם, IP, MAC, נקודה…"
+          className={compact ? "h-10 ps-8" : "h-8 ps-8"}
+        />
+      </div>
+      {compact && (
+        <button
+          onClick={() => {
+            setExpanded(false);
+            setQ("");
+          }}
+          className="shrink-0 px-1 text-sm text-slate-600"
+        >
+          ביטול
+        </button>
+      )}
       {open && results.length > 0 && (
-        <div className="absolute end-0 top-10 z-50 w-72 rounded-xl bg-white p-1 shadow-xl ring-1 ring-slate-200">
+        <div className={cx("absolute z-50 rounded-xl bg-white p-1 shadow-xl ring-1 ring-slate-200", compact ? "inset-x-2 top-full mt-1" : "end-0 top-10 w-72")}>
           {results.map((d) => {
             const def = deviceTypeById(d.type);
             const Icon = def.icon;
@@ -283,8 +446,9 @@ function SiteSearch({ siteId, onPick }: { siteId: string; onPick: (id: string) =
                 onClick={() => {
                   onPick(d.id);
                   setOpen(false);
+                  setExpanded(false);
                 }}
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-start text-sm hover:bg-slate-50"
+                className={cx("flex w-full items-center gap-2 rounded-lg px-2 text-start text-sm hover:bg-slate-50", compact ? "min-h-11 py-2" : "py-1.5")}
               >
                 <Icon size={15} style={{ color: layerById(def.layer).color }} />
                 <span className="flex-1 truncate">{d.label}</span>
@@ -299,11 +463,83 @@ function SiteSearch({ siteId, onPick }: { siteId: string; onPick: (id: string) =
   );
 }
 
+/** Phones: the current floor as a button; the list of floors opens from the bottom. */
+function FloorPicker({
+  floors,
+  current,
+  canEdit,
+  onPick,
+  onSettings,
+  onAdd,
+}: {
+  floors: Floor[];
+  current: Floor;
+  canEdit: boolean;
+  onPick: (id: string) => void;
+  onSettings: (f: Floor) => void;
+  onAdd: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="flex h-9 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-slate-100 px-3 text-sm font-medium">
+        <Layers3 size={15} className="shrink-0 text-slate-500" />
+        <span className="truncate">{current.name}</span>
+        {floors.length > 1 && <span className="shrink-0 text-xs font-normal text-slate-400">({floors.length})</span>}
+        <ChevronDown size={15} className="ms-auto shrink-0 text-slate-400" />
+      </button>
+      {open && (
+        <Modal title="קומות ואזורים" onClose={() => setOpen(false)}>
+          <div className="grid gap-1">
+            {floors.map((f) => (
+              <div key={f.id} className={cx("flex items-center rounded-xl", f.id === current.id ? "bg-slate-900 text-white" : "hover:bg-slate-50")}>
+                <button
+                  onClick={() => {
+                    onPick(f.id);
+                    setOpen(false);
+                  }}
+                  className="flex min-h-12 min-w-0 flex-1 items-center px-3 text-start text-sm font-medium"
+                >
+                  <span className="truncate">{f.name}</span>
+                </button>
+                {canEdit && (
+                  <button
+                    onClick={() => {
+                      setOpen(false);
+                      onSettings(f);
+                    }}
+                    className={cx("grid size-12 shrink-0 place-items-center", f.id === current.id ? "text-white/80" : "text-slate-400")}
+                    aria-label={`הגדרות ${f.name}`}
+                  >
+                    <Settings2 size={18} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+          {canEdit && (
+            <Button
+              className="w-full"
+              onClick={() => {
+                setOpen(false);
+                onAdd();
+              }}
+            >
+              <Plus size={16} /> קומה / אזור חדש
+            </Button>
+          )}
+        </Modal>
+      )}
+    </>
+  );
+}
+
 function FloorSettings({ floor, onClose, onDeleted }: { floor: Floor; onClose: () => void; onDeleted: () => void }) {
   const live = useApp((s) => s.floors.find((f) => f.id === floor.id)) ?? floor;
   const updateFloor = useApp((s) => s.updateFloor);
   const deleteFloor = useApp((s) => s.deleteFloor);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
   const onFile = async (file?: File) => {
@@ -333,6 +569,7 @@ function FloorSettings({ floor, onClose, onDeleted }: { floor: Floor; onClose: (
     } finally {
       setBusy(null);
       if (fileRef.current) fileRef.current.value = "";
+      if (cameraRef.current) cameraRef.current.value = "";
     }
   };
 
@@ -346,10 +583,18 @@ function FloorSettings({ floor, onClose, onDeleted }: { floor: Floor; onClose: (
         <p className="mb-2 text-xs text-slate-500">
           תמונה (JPG/PNG), צילום של שרטוט, או PDF של אדריכל. אחרי ההעלאה כדאי לכייל את קנה המידה עם הכלי <b>כיול</b> בסרגל הכלים.
         </p>
-        <Button variant="primary" disabled={!!busy} onClick={() => fileRef.current?.click()}>
-          <FileUp size={16} /> {busy ?? (live.plan ? "החלף תוכנית" : "העלה תוכנית")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="primary" disabled={!!busy} onClick={() => fileRef.current?.click()}>
+            <FileUp size={16} /> {busy ?? (live.plan ? "החלף תוכנית" : "העלה תוכנית")}
+          </Button>
+          {!busy && (
+            <Button className="md:hidden" onClick={() => cameraRef.current?.click()}>
+              <Camera size={16} /> צלם תוכנית
+            </Button>
+          )}
+        </div>
         <input ref={fileRef} type="file" accept="image/*,application/pdf,.pdf" hidden onChange={(e) => onFile(e.target.files?.[0])} />
+        <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => onFile(e.target.files?.[0])} />
         {live.plan && <p className="mt-2 text-[11px] text-slate-500">החלפת תוכנית שומרת את מיקומי הציוד, ומאפסת את כיול קנה המידה.</p>}
       </div>
       <div className="text-sm text-slate-600">
@@ -381,9 +626,10 @@ function DevicesTable({ siteId, onPick }: { siteId: string; onPick: (id: string)
     .filter((d) => layer === "all" || deviceTypeById(d.type).layer === layer)
     .sort((a, b) => a.type.localeCompare(b.type) || a.label.localeCompare(b.label, "he"));
   const layersInUse = [...new Set(devices.filter((d) => d.siteId === siteId).map((d) => deviceTypeById(d.type).layer))];
+  const phone = useIsPhone();
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-4">
-      <div className="mb-3 flex flex-wrap gap-1">
+      <div className={cx("mb-3 flex gap-1", phone ? "no-scrollbar -mx-3 overflow-x-auto px-3 [&>*]:shrink-0" : "flex-wrap")}>
         <FilterChip active={layer === "all"} onClick={() => setLayer("all")}>
           הכל ({devices.filter((d) => d.siteId === siteId).length})
         </FilterChip>
@@ -393,6 +639,39 @@ function DevicesTable({ siteId, onPick }: { siteId: string; onPick: (id: string)
           </FilterChip>
         ))}
       </div>
+      {phone ? (
+        <div className="grid gap-2">
+          {rows.map((d) => {
+            const def = deviceTypeById(d.type);
+            const Icon = def.icon;
+            const color = layerById(def.layer).color;
+            const detail = [d.extra.pointNo && `נקודה ${d.extra.pointNo}`, d.extra.channel && `ערוץ ${d.extra.channel}`, d.extra.zone && `אזור ${d.extra.zone}`, d.model]
+              .filter(Boolean)
+              .join(" · ");
+            return (
+              <button key={d.id} onClick={() => onPick(d.id)} className="flex items-center gap-3 rounded-xl bg-white p-3 text-start ring-1 ring-slate-200 active:bg-slate-50">
+                <span className="grid size-10 shrink-0 place-items-center rounded-full ring-2" style={{ color, ["--tw-ring-color" as string]: color }}>
+                  <Icon size={18} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate font-medium">{d.label}</span>
+                  <span className="block truncate text-xs text-slate-500">
+                    {def.label} · {floors.find((f) => f.id === d.floorId)?.name}
+                  </span>
+                  {detail && <span className="block truncate text-xs text-slate-400">{detail}</span>}
+                </span>
+                {(d.net.ip || d.net.mac) && (
+                  <span className="ltr shrink-0 text-end font-mono text-xs text-slate-600">
+                    {d.net.ip && <span className="block">{d.net.ip}</span>}
+                    {d.net.mac && <span className="block text-[10px] text-slate-400">{d.net.mac}</span>}
+                  </span>
+                )}
+              </button>
+            );
+          })}
+          {!rows.length && <Empty>אין ציוד באתר הזה עדיין.</Empty>}
+        </div>
+      ) : (
       <div className="overflow-x-auto rounded-xl bg-white ring-1 ring-slate-200">
         <table className="w-full min-w-[720px] text-sm">
           <thead className="bg-slate-50 text-xs text-slate-500">
@@ -431,6 +710,7 @@ function DevicesTable({ siteId, onPick }: { siteId: string; onPick: (id: string)
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
@@ -441,6 +721,42 @@ function LinksTable({ siteId, onPick }: { siteId: string; onPick: (id: string) =
   const floors = useApp((s) => s.floors);
   const rows = links.filter((l) => l.siteId === siteId && l.kind === "cable");
   const name = (id?: string) => devices.find((d) => d.id === id)?.label ?? "—";
+  const phone = useIsPhone();
+  if (phone) {
+    return (
+      <div className="min-h-0 flex-1 overflow-auto p-3">
+        <div className="grid gap-2">
+          {rows.map((l) => {
+            const t = linkTypeById(l.cableType);
+            const fl = floors.find((f) => f.id === l.floorId);
+            const len = linkLengthM(l, fl?.pxPerMeter);
+            const end = (e: typeof l.a) => (
+              <button onClick={() => e && onPick(e.deviceId)} disabled={!e} className="min-w-0 flex-1 rounded-lg bg-slate-50 px-2 py-2 text-start">
+                <span className="block truncate text-sm font-medium">{name(e?.deviceId)}</span>
+                {e?.port && <span className="block text-xs text-slate-500">פורט {e.port}</span>}
+              </button>
+            );
+            return (
+              <div key={l.id} className="rounded-xl bg-white p-2 ring-1 ring-slate-200">
+                <div className="flex items-center gap-1.5">
+                  {end(l.a)}
+                  <span className="shrink-0 text-slate-300">⟷</span>
+                  {end(l.b)}
+                </div>
+                <div className="mt-1.5 flex items-center gap-2 px-1 text-xs text-slate-500">
+                  <span className="h-1 w-4 rounded" style={{ background: l.color || t.color }} />
+                  {t.label}
+                  {len ? <span>· {len.toFixed(1)} מ׳</span> : null}
+                  <span className="ms-auto">{fl?.name ?? "בין קומות"}</span>
+                </div>
+              </div>
+            );
+          })}
+          {!rows.length && <Empty>אין כבלים באתר הזה עדיין.</Empty>}
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="min-h-0 flex-1 overflow-auto p-3 sm:p-4">
       <div className="overflow-x-auto rounded-xl bg-white ring-1 ring-slate-200">

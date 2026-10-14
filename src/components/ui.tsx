@@ -1,6 +1,7 @@
 "use client";
 
 import { X } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useEffect, type ButtonHTMLAttributes, type ComponentProps, type ReactNode, type SelectHTMLAttributes, type TextareaHTMLAttributes } from "react";
 
 const cx = (...c: (string | false | undefined | null)[]) => c.filter(Boolean).join(" ");
@@ -19,7 +20,8 @@ export function Button({
       {...props}
       className={cx(
         "inline-flex items-center justify-center gap-1.5 rounded-lg font-medium transition-colors disabled:opacity-50 disabled:pointer-events-none",
-        size === "sm" ? "h-8 px-2.5 text-sm" : "h-10 px-4 text-sm",
+        // a little taller on phones, for fingers
+        size === "sm" ? "h-9 px-2.5 text-sm sm:h-8" : "h-11 px-4 text-sm sm:h-10",
         variant === "primary" && "bg-slate-900 text-white hover:bg-slate-700",
         variant === "secondary" && "bg-white text-slate-800 ring-1 ring-slate-200 hover:bg-slate-50",
         variant === "ghost" && "text-slate-600 hover:bg-slate-100",
@@ -35,7 +37,7 @@ export function Input({ className, ...props }: ComponentProps<"input">) {
     <input
       {...props}
       className={cx(
-        "h-9 w-full rounded-lg bg-white px-2.5 text-sm ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400",
+        "h-10 w-full rounded-lg bg-white px-2.5 text-sm ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-blue-500 placeholder:text-slate-400 sm:h-9",
         className,
       )}
     />
@@ -59,7 +61,7 @@ export function Select({ className, children, ...props }: SelectHTMLAttributes<H
     <select
       {...props}
       className={cx(
-        "h-9 w-full rounded-lg bg-white px-2 text-sm ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-blue-500",
+        "h-10 w-full rounded-lg bg-white px-2 text-sm ring-1 ring-slate-200 outline-none focus:ring-2 focus:ring-blue-500 sm:h-9",
         className,
       )}
     >
@@ -93,22 +95,32 @@ export function Modal({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
-  return (
+  // rendered at the top of the page, so no panel or tool bar (with its own stacking) can end up above it
+  return createPortal(
+    // phones: a sheet from the bottom; the header and the buttons stay put while the content scrolls
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" onPointerDown={onClose}>
       <div
-        className="max-h-[90dvh] w-full overflow-auto rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl"
+        className="flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl"
         onPointerDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+        <div className="mx-auto mt-2 h-1.5 w-10 shrink-0 rounded-full bg-slate-300 sm:hidden" />
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-4 py-3">
           <h2 className="font-semibold">{title}</h2>
-          <button onClick={onClose} className="rounded p-1 text-slate-400 hover:bg-slate-100" aria-label="סגור">
+          <button onClick={onClose} className="-m-1 rounded p-2 text-slate-400 hover:bg-slate-100" aria-label="סגור">
             <X size={18} />
           </button>
         </div>
-        <div className="space-y-3 p-4">{children}</div>
-        {footer && <div className="flex justify-start gap-2 border-t border-slate-100 px-4 py-3">{footer}</div>}
+        <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4" style={footer ? undefined : { paddingBottom: "max(1rem, env(safe-area-inset-bottom))" }}>
+          {children}
+        </div>
+        {footer && (
+          <div className="flex shrink-0 justify-start gap-2 border-t border-slate-100 px-4 pt-3 max-sm:[&>*]:flex-1" style={{ paddingBottom: "max(0.75rem, env(safe-area-inset-bottom))" }}>
+            {footer}
+          </div>
+        )}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

@@ -10,6 +10,7 @@ import { useApp } from "@/lib/store";
 import { ROLE_LABEL, useCurrentUser, useVisibleAccounts } from "@/lib/access";
 import { useSync } from "@/lib/sync";
 import { ImportLocalData } from "./ImportLocalData";
+import { InstallApp } from "./InstallApp";
 
 export function AccountsScreen() {
   return (
@@ -45,6 +46,7 @@ function AccountsList() {
         )}
       </div>
 
+      <InstallApp variant="banner" />
       {isAdmin && <ImportLocalData />}
 
       {accounts.length === 0 ? (

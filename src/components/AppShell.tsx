@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronLeft, Cloud, CloudOff, LoaderCircle, LogOut, MapPinned, Settings, TriangleAlert, UserRound, Users } from "lucide-react";
+import { ChevronLeft, ChevronRight, Cloud, CloudOff, LoaderCircle, LogOut, MapPinned, Settings, TriangleAlert, UserRound, Users } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useHydrated } from "@/lib/store";
 import { DialogHost } from "./dialogs";
@@ -37,32 +37,43 @@ export function AppShell({
   useEffect(() => {
     if (ready && userId) void startSync(userId);
   }, [ready, userId]);
+  // phones show a back arrow (to the nearest level above) and the current title instead of the path
+  const back = crumbs.length ? ([...crumbs].reverse().find((c) => c.href)?.href ?? "/") : null;
+  const title = crumbs[crumbs.length - 1]?.label;
   return (
     <div className="flex h-dvh flex-col">
-      <header className="z-30 flex h-14 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 sm:px-4">
-        <Link href="/" className="flex items-center gap-2 font-bold text-slate-900">
-          <span className="grid size-8 place-items-center rounded-lg bg-slate-900 text-white">
-            <MapPinned size={18} />
-          </span>
-          <span className="hidden sm:inline">NetMap</span>
-        </Link>
-        <nav className="flex min-w-0 flex-1 items-center gap-1 text-sm text-slate-500">
-          {crumbs.map((c, i) => (
-            <span key={i} className="flex min-w-0 items-center gap-1">
-              <ChevronLeft size={14} className="shrink-0 text-slate-300" />
-              {c.href ? (
-                <Link href={c.href} className="truncate hover:text-slate-900">
-                  {c.label}
-                </Link>
-              ) : (
-                <span className="truncate font-medium text-slate-900">{c.label}</span>
-              )}
+      <header className="pt-safe z-30 shrink-0 border-b border-slate-200 bg-white">
+        <div className="flex h-14 items-center gap-2 px-3 sm:px-4">
+          {back !== null && (
+            <Link href={back} className="-ms-1 grid size-10 shrink-0 place-items-center rounded-lg text-slate-700 hover:bg-slate-100 md:hidden" aria-label="חזרה">
+              <ChevronRight size={22} />
+            </Link>
+          )}
+          <Link href="/" className={`flex items-center gap-2 font-bold text-slate-900 ${back !== null ? "max-md:hidden" : ""}`}>
+            <span className="grid size-8 place-items-center rounded-lg bg-slate-900 text-white">
+              <MapPinned size={18} />
             </span>
-          ))}
-        </nav>
-        {actions}
-        {ready && <SyncBadge />}
-        {ready && <UserMenu />}
+            <span className="hidden sm:inline">NetMap</span>
+          </Link>
+          <div className="min-w-0 flex-1 truncate font-semibold md:hidden">{title ?? "NetMap"}</div>
+          <nav className="hidden min-w-0 flex-1 items-center gap-1 text-sm text-slate-500 md:flex">
+            {crumbs.map((c, i) => (
+              <span key={i} className="flex min-w-0 items-center gap-1">
+                <ChevronLeft size={14} className="shrink-0 text-slate-300" />
+                {c.href ? (
+                  <Link href={c.href} className="truncate hover:text-slate-900">
+                    {c.label}
+                  </Link>
+                ) : (
+                  <span className="truncate font-medium text-slate-900">{c.label}</span>
+                )}
+              </span>
+            ))}
+          </nav>
+          {actions}
+          {ready && <SyncBadge />}
+          {ready && <UserMenu />}
+        </div>
       </header>
       <main className={fullBleed ? "relative flex min-h-0 flex-1" : "min-h-0 flex-1 overflow-auto"}>
         {ready ? children : <div className="grid flex-1 place-items-center p-10 text-slate-400">טוען…</div>}
@@ -85,7 +96,7 @@ function Toast() {
   if (!text || hidden === n) return null;
   return (
     <div
-      className={`pointer-events-none fixed bottom-6 left-1/2 z-50 max-w-[90vw] -translate-x-1/2 rounded-full px-4 py-2 text-sm text-white shadow-lg ${tone === "error" ? "bg-red-600/95" : "bg-slate-900/90"}`}
+      className={`pointer-events-none fixed bottom-24 left-1/2 z-50 max-w-[90vw] text-center md:bottom-6 -translate-x-1/2 rounded-full px-4 py-2 text-sm text-white shadow-lg ${tone === "error" ? "bg-red-600/95" : "bg-slate-900/90"}`}
     >
       {text}
     </div>

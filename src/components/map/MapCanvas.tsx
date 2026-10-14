@@ -17,6 +17,7 @@ import { refAnchor, refFromSelection } from "./refs";
 import { mountInRack, mountProblem } from "@/lib/rack-mount";
 import { rackKindForDevice, usedUnits } from "@/lib/rack-catalog";
 import { toast } from "@/lib/toast";
+import { isPhone, useCoarsePointer, useIsPhone } from "@/lib/use-media";
 
 type View = { x: number; y: number; k: number };
 
@@ -55,6 +56,10 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
 
   const ed = useEditor();
   const { tool, selection, layers, showLabels, showCones } = ed;
+  const phone = useIsPhone();
+  /** finger input: bigger hit areas and handles */
+  const coarse = useCoarsePointer();
+  const hs = coarse ? 1.7 : 1;
 
   // in-progress drawing / measurement belong to the tool that started them
   const [drawState, setDrawState] = useState<{ tool: string; d: Drawing | null }>({ tool, d: null });
@@ -122,10 +127,9 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     const w = el?.clientWidth ?? 0;
     const h = el?.clientHeight ?? 0;
     if (!w || !h) return;
-    // keep the plan clear of the assistant panel: a side card on desktop, a bottom sheet on phones
-    const { left, bottom } = assistantInset(useEditor.getState().assistantOpen, w, h);
-    // margins leave room for the compass labels, the tool bar (right) and the top buttons
-    const m = { l: left + 44, r: 84, t: 92, b: bottom + 36 };
+    // desktop: room for the compass labels, the tool bar (right) and the top buttons.
+    // Phones: nothing floats over the map (the strip, sheet and tool bar are rows of their own).
+    const m = isPhone() ? { l: 20, r: 20, t: 20, b: 20 } : { l: 44, r: 84, t: 92, b: 36 };
     const aw = Math.max(80, w - m.l - m.r);
     const ah = Math.max(80, h - m.t - m.b);
     const k = Math.min(aw / W, ah / H);
@@ -141,15 +145,17 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     const el = wrapRef.current;
     if (!el) return;
     let prevW = 0;
+    let prevH = 0;
     const ro = new ResizeObserver(([e]) => {
-      const w = e.contentRect.width;
+      const { width: w, height: h } = e.contentRect;
       if (w !== prevW) {
         if (!userMoved.current) fitRef.current();
         // RTL layout: the side panel opens on the left, so the canvas' left edge moves.
         // Shift the view by the width change to keep the map visually in place.
         else if (prevW) setView((v) => ({ ...v, x: v.x + (w - prevW) }));
-      }
+      } else if (h !== prevH && !userMoved.current) fitRef.current();
       prevW = w;
+      prevH = h;
     });
     ro.observe(el);
     return () => ro.disconnect();
@@ -459,6 +465,32 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
   };
 
   // ---- pointer handling ----
+  const holdTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const dragRef = useRef<Drag | null>(null);
+  useEffect(() => {
+    dragRef.current = drag;
+  });
+  const lastTap = useRef<{ t: number; x: number; y: number } | null>(null);
+
+  /**
+   * Touch: a finger that lands on an item that isn't selected pans the map, and a tap selects the
+   * item. Holding the finger still for a moment picks the item up so it can be moved. A selected
+   * item moves right away. Returns true when it handled the press.
+   */
+  const touchGate = (e: React.PointerEvent, pick: NonNullable<Selection>, pickUp: () => void) => {
+    if (e.pointerType !== "touch") return false;
+    if (selection?.kind === pick.kind && selection.id === pick.id) return false;
+    onBackgroundDown(e, pick);
+    clearTimeout(holdTimer.current);
+    holdTimer.current = setTimeout(() => {
+      const cur = dragRef.current;
+      if (cur?.type !== "pan" || cur.moved || pointers.current.size !== 1) return;
+      navigator.vibrate?.(12);
+      pickUp();
+    }, 380);
+    return true;
+  };
+
   const capture = (e: React.PointerEvent) => {
     // a primary press (mouse, or the first finger) starts a fresh gesture: drop pointers whose
     // release was never delivered, or every later click would be mistaken for a pinch
@@ -498,7 +530,8 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
       if (canEdit) {
         // selected on release: opening the side panel mid-drag would shift the map under the pointer
         const w = toWorld(e);
-        setDrag({ type: "device", id: d.id, ox: d.x, oy: d.y, sx: w.x, sy: w.y, x: d.x, y: d.y, moved: false });
+        const start = () => setDrag({ type: "device", id: d.id, ox: d.x, oy: d.y, sx: w.x, sy: w.y, x: d.x, y: d.y, moved: false });
+        if (!touchGate(e, { kind: "device", id: d.id }, start)) start();
       } else ed.select({ kind: "device", id: d.id });
       return;
     }
@@ -621,9 +654,33 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     }
   };
 
+  const zoomAt = (p: Point, factor: number) => {
+    userMoved.current = true;
+    setView((v) => {
+      const k = clamp(v.k * factor, 0.05, 8);
+      return { k, x: p.x - ((p.x - v.x) / v.k) * k, y: p.y - ((p.y - v.y) / v.k) * k };
+    });
+  };
+
   const onPointerUp = (e: React.PointerEvent) => {
     pointers.current.delete(e.pointerId);
+    clearTimeout(holdTimer.current);
+    const cluster = pendingCluster.current;
+    pendingCluster.current = null;
+    if (cluster && drag?.type === "pan" && !drag.moved) {
+      setDrag(null);
+      return openCluster(cluster);
+    }
     if (!drag) return;
+    // a double tap on an empty spot zooms in there
+    if (drag.type === "pan" && !drag.moved && !drag.pick && !ed.pickMode && e.pointerType === "touch") {
+      const p = local(e);
+      const last = lastTap.current;
+      if (last && e.timeStamp - last.t < 320 && Math.hypot(p.x - last.x, p.y - last.y) < 30) {
+        lastTap.current = null;
+        zoomAt(p, 2);
+      } else lastTap.current = { t: e.timeStamp, x: p.x, y: p.y };
+    }
     if (drag.type === "pinch") {
       if (pointers.current.size < 2) setDrag(null);
       return;
@@ -767,6 +824,25 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     }
   };
 
+  // ---- phone tool bar: it shows "סיום / ביטול" for the line being drawn and sends the taps here ----
+  useEffect(() => {
+    useEditor.setState({ drawingN: drawing?.points.length ?? 0, regionStarted: !!regionStart });
+  }, [drawing, regionStart]);
+  useEffect(() => () => useEditor.setState({ drawingN: 0, regionStarted: false }), []);
+  const requestsRef = useRef({ finish: () => finishLine(), cancel: () => setDrawing(null), clearRegion: () => setRegionStart(null) });
+  useEffect(() => {
+    requestsRef.current = { finish: () => finishLine(), cancel: () => setDrawing(null), clearRegion: () => setRegionStart(null) };
+  });
+  useEffect(() => {
+    if (ed.finishReq) requestsRef.current.finish();
+  }, [ed.finishReq]);
+  useEffect(() => {
+    if (ed.cancelReq) requestsRef.current.cancel();
+  }, [ed.cancelReq]);
+  useEffect(() => {
+    if (!ed.pickMode) requestsRef.current.clearRegion();
+  }, [ed.pickMode]);
+
   // ---- keyboard ----
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -830,6 +906,54 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     return pts;
   };
 
+  /** Where a selected element is on the map. */
+  const selectionAnchor = (sel: NonNullable<Selection>): Point | null => {
+    if (sel.kind === "device") {
+      const d = siteDevices.find((x) => x.id === sel.id && x.floorId === floor.id);
+      return d ? devPos(d) : null;
+    }
+    if (sel.kind === "note") {
+      const n = notes.find((x) => x.id === sel.id);
+      return n ? { x: n.x, y: n.y } : null;
+    }
+    if (sel.kind === "link") {
+      const l = links.find((x) => x.id === sel.id);
+      if (!l) return null;
+      const pts = linkPoints(l);
+      return pts[Math.floor(pts.length / 2)] ?? null;
+    }
+    if (!useApp.getState()[sel.kind === "wall" ? "walls" : sel.kind === "area" ? "areas" : sel.kind === "opening" ? "openings" : "obstacles"].some((x) => x.id === sel.id && x.floorId === floor.id)) return null;
+    return refAnchor({ kind: sel.kind, id: sel.id, label: "" }, sppm);
+  };
+
+  /** Phones: when the sheet opens (or grows) over the selected item, slide the map so the item stays in view. */
+  const keepSelectionVisible = () => {
+    const el = wrapRef.current;
+    const sel = useEditor.getState().selection;
+    if (!el || !sel || !isPhone()) return;
+    const a = selectionAnchor(sel);
+    if (!a) return;
+    const w = el.clientWidth;
+    const top = 16;
+    const bottom = el.clientHeight - 16;
+    if (bottom - top < 48) return; // the sheet is at full height: hardly any map to show
+    setView((v) => {
+      const sx = v.x + a.x * v.k;
+      const sy = v.y + a.y * v.k;
+      if (sx > 24 && sx < w - 24 && sy > top && sy < bottom) return v;
+      userMoved.current = true;
+      return { ...v, x: w / 2 - a.x * v.k, y: (top + bottom) / 2 - a.y * v.k };
+    });
+  };
+  const keepVisibleRef = useRef(keepSelectionVisible);
+  useEffect(() => {
+    keepVisibleRef.current = keepSelectionVisible;
+  });
+  useEffect(() => {
+    keepVisibleRef.current();
+  }, [selection?.kind, selection?.id, ed.sheetH, ed.barH]);
+
+
   const tracing = !!trace && trace.linkIds.size > 0;
   const dimLink = (id: string) => tracing && !trace!.linkIds.has(id);
   const dimDevice = (id: string) => tracing && !trace!.deviceIds.has(id);
@@ -856,6 +980,85 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     }
   }
   const visibleDevices = devices.filter((d) => layers[deviceTypeById(d.type).layer] && !mountedIn.has(d.id));
+
+  /**
+   * Phones: nothing may cover anything. Equipment that would overlap on screen is drawn as one
+   * numbered circle (a tap zooms in until it separates), and a name is shown only where it fits
+   * without covering a marker or another name. The selected item always stands on its own.
+   */
+  const phoneLayout = (() => {
+    if (!phone) return null;
+    const r = 14 * ms; // marker radius on screen
+    const near = 2 * r + 4;
+    const pinned = new Set<string>();
+    if (selection?.kind === "device") pinned.add(selection.id);
+    if (drag?.type === "device") pinned.add(drag.id);
+    if (drawing?.a) pinned.add(drawing.a.deviceId);
+    const rank = (d: Device) => (pinned.has(d.id) ? 0 : d.type === "rack" ? 1 : deviceTypeById(d.type).camera ? 2 : 3);
+    const pts = visibleDevices
+      .map((d) => {
+        const p = devPos(d);
+        return { d, wx: p.x, wy: p.y, x: view.x + p.x * view.k, y: view.y + p.y * view.k };
+      })
+      .sort((a, b) => rank(a.d) - rank(b.d));
+    const taken = new Set<string>();
+    const groups: (typeof pts)[] = [];
+    for (const a of pts) {
+      if (taken.has(a.d.id)) continue;
+      taken.add(a.d.id);
+      const members = [a];
+      if (!pinned.has(a.d.id)) {
+        for (const b of pts) {
+          if (taken.has(b.d.id) || pinned.has(b.d.id) || Math.hypot(a.x - b.x, a.y - b.y) >= near) continue;
+          members.push(b);
+          taken.add(b.d.id);
+        }
+      }
+      groups.push(members);
+    }
+    const clusters = groups.filter((g) => g.length > 1);
+    const grouped = new Set(clusters.flat().map((m) => m.d.id));
+    // names: one at a time, in priority order, only where they cover nothing
+    type Box = { x0: number; x1: number; y0: number; y1: number };
+    const hit = (a: Box, b: Box) => a.x0 < b.x1 && b.x0 < a.x1 && a.y0 < b.y1 && b.y0 < a.y1;
+    const marks: Box[] = groups.map((g) => {
+      const x = g.reduce((t, m) => t + m.x, 0) / g.length;
+      const y = g.reduce((t, m) => t + m.y, 0) / g.length;
+      const rr = g.length > 1 ? 18 : r;
+      return { x0: x - rr, x1: x + rr, y0: y - rr, y1: y + rr };
+    });
+    const names: Box[] = [];
+    const labeled = new Set<string>();
+    for (const g of groups) {
+      if (g.length > 1) continue;
+      const a = g[0];
+      const text = a.d.label + (a.d.type === "rack" && a.d.rack ? " · 00/00U" : "");
+      const w = text.length * 6.2 * ms + 6;
+      const box = { x0: a.x - w / 2, x1: a.x + w / 2, y0: a.y + 20 * ms, y1: a.y + 35 * ms };
+      if (marks.some((m) => hit(m, box)) || names.some((n) => hit(n, box))) continue;
+      names.push(box);
+      labeled.add(a.d.id);
+    }
+    return { clusters, grouped, labeled, near };
+  })();
+
+  /** Zooms in on a group of overlapping equipment until its members separate. */
+  const openCluster = (members: { wx: number; wy: number }[]) => {
+    const el = wrapRef.current;
+    if (!el || !phoneLayout) return;
+    let minD = Infinity;
+    for (let i = 0; i < members.length; i++)
+      for (let j = i + 1; j < members.length; j++) minD = Math.min(minD, Math.hypot(members[i].wx - members[j].wx, members[i].wy - members[j].wy));
+    const cx = members.reduce((t, m) => t + m.wx, 0) / members.length;
+    const cy = members.reduce((t, m) => t + m.wy, 0) / members.length;
+    userMoved.current = true;
+    setView((v) => {
+      const k = clamp(Math.max(v.k * 1.8, minD > 0.5 ? (phoneLayout.near * 1.5) / minD : v.k * 3), 0.05, 8);
+      return { k, x: el.clientWidth / 2 - cx * k, y: el.clientHeight / 2 - cy * k };
+    });
+  };
+  /** a press that started on a group: opened on release unless the finger moved (then it was a pan) */
+  const pendingCluster = useRef<{ wx: number; wy: number }[] | null>(null);
   const selectedLink = selection?.kind === "link" ? links.find((l) => l.id === selection.id) : undefined;
   // segments shared by several drawn cables (identical corners), counted once per segment
   const bundles = (() => {
@@ -910,7 +1113,9 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
   const selectedArea = selection?.kind === "area" ? areas.find((a) => a.id === selection.id) : undefined;
 
   return (
-    <div ref={wrapRef} className="absolute inset-0 overflow-hidden bg-slate-200">
+    <div className="absolute inset-0 flex flex-col">
+    {phone && <PhoneMapInfo k={view.k} ppm={ppm} cableM={selectedLink?.kind === "cable" ? linkLengthM(selectedLink, ppm) : undefined} />}
+    <div ref={wrapRef} className="relative min-h-0 flex-1 overflow-hidden bg-slate-200">
       <svg
         ref={svgRef}
         className="map-canvas absolute inset-0 h-full w-full"
@@ -994,13 +1199,16 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                 e.stopPropagation();
                 onBackgroundDown(e, tool === "select" ? pick : undefined);
               }}
+              touch={coarse}
               onWallDown={
                 editingStructure && !ed.pickMode
                   ? (e, w) => {
                       e.stopPropagation();
-                      capture(e);
                       const wpt = toWorld(e);
-                      setDrag({ type: "wall", id: w.id, a: w.a, b: w.b, sx: wpt.x, sy: wpt.y, dx: 0, dy: 0, moved: false });
+                      const start = () => setDrag({ type: "wall", id: w.id, a: w.a, b: w.b, sx: wpt.x, sy: wpt.y, dx: 0, dy: 0, moved: false });
+                      if (touchGate(e, { kind: "wall", id: w.id }, start)) return;
+                      capture(e);
+                      start();
                     }
                   : undefined
               }
@@ -1017,8 +1225,10 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                 editingStructure && !ed.pickMode
                   ? (e, o) => {
                       e.stopPropagation();
+                      const start = () => setDrag({ type: "opening", id: o.id, offsetM: o.offsetM, orig: o.offsetM });
+                      if (touchGate(e, { kind: "opening", id: o.id }, start)) return;
                       capture(e);
-                      setDrag({ type: "opening", id: o.id, offsetM: o.offsetM, orig: o.offsetM });
+                      start();
                     }
                   : undefined
               }
@@ -1026,9 +1236,11 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                 editingStructure && !ed.pickMode
                   ? (e, o) => {
                       e.stopPropagation();
-                      capture(e);
                       const wpt = toWorld(e);
-                      setDrag({ type: "obstacle", id: o.id, ox: o.x, oy: o.y, sx: wpt.x, sy: wpt.y, x: o.x, y: o.y, moved: false });
+                      const start = () => setDrag({ type: "obstacle", id: o.id, ox: o.x, oy: o.y, sx: wpt.x, sy: wpt.y, x: o.x, y: o.y, moved: false });
+                      if (touchGate(e, { kind: "obstacle", id: o.id }, start)) return;
+                      capture(e);
+                      start();
                     }
                   : undefined
               }
@@ -1161,7 +1373,7 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                       <circle
                         cx={mid.x}
                         cy={mid.y}
-                        r={4.5 * s}
+                        r={4.5 * s * hs}
                         fill="#fff"
                         stroke="#3b82f6"
                         strokeWidth={1.5 * s}
@@ -1178,7 +1390,7 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                       <circle
                         cx={p.x}
                         cy={p.y}
-                        r={(isEnd ? 6 : 5.5) * s}
+                        r={(isEnd ? 6 : 5.5) * s * hs}
                         fill="#3b82f6"
                         stroke="#fff"
                         strokeWidth={2 * s}
@@ -1211,7 +1423,7 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                   key={i}
                   cx={q.x}
                   cy={q.y}
-                  r={5.5 * s}
+                  r={5.5 * s * hs}
                   fill={selectedArea.color}
                   stroke="#fff"
                   strokeWidth={2 * s}
@@ -1227,6 +1439,7 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
 
           {/* devices */}
           {visibleDevices.map((d) => {
+            if (phoneLayout?.grouped.has(d.id)) return null;
             const def = deviceTypeById(d.type);
             const color = layerById(def.layer).color;
             const Icon = def.icon;
@@ -1255,6 +1468,7 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                     </text>
                   </>
                 )}
+                {coarse && <circle r={24} fill="transparent" />}
                 {holdsSelected && !sel && <circle r={20} fill="none" stroke="#2563eb" strokeWidth={3} strokeDasharray="4 3" />}
                 {(sel || inTrace) && <circle r={20} fill="none" stroke={sel ? "#2563eb" : "#facc15"} strokeWidth={sel ? 3 : 4} />}
                 <circle r={14} fill="#fff" stroke={color} strokeWidth={2.5} />
@@ -1268,12 +1482,39 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                     </text>
                   </g>
                 )}
-                {(labelsVisible || sel || inTrace) && (
+                {(phoneLayout ? sel || (labelsVisible && phoneLayout.labeled.has(d.id)) : labelsVisible || sel || inTrace) && (
                   <text y={28} fontSize={11} fontWeight={sel ? 700 : 500} textAnchor="middle" fill="#0f172a" style={halo(1)}>
                     {d.label}
                     {d.type === "rack" && d.rack ? ` · ${usedUnits(d.rack.items)}/${d.rack.spec.units}U` : ""}
                   </text>
                 )}
+              </g>
+            );
+          })}
+
+          {/* phones: overlapping equipment as one numbered circle */}
+          {phoneLayout?.clusters.map((g) => {
+            const cx = g.reduce((t, m) => t + m.wx, 0) / g.length;
+            const cy = g.reduce((t, m) => t + m.wy, 0) / g.length;
+            const colors = [...new Set(g.map((m) => layerById(deviceTypeById(m.d.type).layer).color))].slice(0, 4);
+            return (
+              <g
+                key={`cluster-${g[0].d.id}`}
+                transform={`translate(${cx} ${cy}) scale(${s})`}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  onBackgroundDown(e);
+                  pendingCluster.current = g;
+                }}
+              >
+                <circle r={26} fill="transparent" />
+                <circle r={18} fill="#0f172a" stroke="#fff" strokeWidth={3} />
+                {colors.map((c, i) => (
+                  <circle key={c} cx={-((colors.length - 1) * 5) / 2 + i * 5} cy={11} r={2.2} fill={c} />
+                ))}
+                <text y={3} fontSize={13} fontWeight={700} fill="#fff" textAnchor="middle">
+                  {g.length}
+                </text>
               </g>
             );
           })}
@@ -1298,7 +1539,7 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
               <circle
                 cx={camHandle.hx}
                 cy={camHandle.hy}
-                r={7 * s}
+                r={7 * s * hs}
                 fill="#ef4444"
                 stroke="#fff"
                 strokeWidth={2 * s}
@@ -1312,7 +1553,9 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
           {notes.map((n) => {
             const p = drag?.type === "note" && drag.id === n.id ? drag : n;
             const sel = selection?.kind === "note" && selection.id === n.id;
-            const w = Math.min(260, n.text.length * 6.4 + 30);
+            // phones: just an icon until zoomed in or selected, so notes don't hide the equipment
+            const compact = phone && !sel && view.k < 1.2;
+            const w = compact ? 26 : Math.min(260, n.text.length * 6.4 + 30);
             return (
               <g
                 key={n.id}
@@ -1320,17 +1563,25 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                 style={{ cursor: "pointer" }}
                 onPointerDown={(e) => {
                   e.stopPropagation();
-                  capture(e);
-                  if (tool !== "select") return toolClick(toWorld(e));
+                  if (tool !== "select") {
+                    capture(e);
+                    return toolClick(toWorld(e));
+                  }
                   const wpt = toWorld(e);
-                  setDrag({ type: "note", id: n.id, ox: n.x, oy: n.y, sx: wpt.x, sy: wpt.y, x: n.x, y: n.y, moved: false });
+                  const start = () => setDrag({ type: "note", id: n.id, ox: n.x, oy: n.y, sx: wpt.x, sy: wpt.y, x: n.x, y: n.y, moved: false });
+                  if (touchGate(e, { kind: "note", id: n.id }, start)) return;
+                  capture(e);
+                  start();
                 }}
               >
+                {coarse && <rect x={-w / 2 - 8} y={-20} width={w + 16} height={40} fill="transparent" />}
                 <rect x={-w / 2} y={-12} width={w} height={24} rx={6} fill="#fef9c3" stroke={sel ? "#2563eb" : "#eab308"} strokeWidth={sel ? 2 : 1} />
-                <StickyNote x={w / 2 - 20} y={-7} width={14} height={14} color="#a16207" />
-                <text x={w / 2 - 24} y={4} fontSize={11} fill="#713f12" textAnchor="start" direction="rtl">
-                  {n.text.length > 38 ? n.text.slice(0, 37) + "…" : n.text}
-                </text>
+                <StickyNote x={compact ? -7 : w / 2 - 20} y={-7} width={14} height={14} color="#a16207" />
+                {!compact && (
+                  <text x={w / 2 - 24} y={4} fontSize={11} fill="#713f12" textAnchor="start" direction="rtl">
+                    {n.text.length > 38 ? n.text.slice(0, 37) + "…" : n.text}
+                  </text>
+                )}
               </g>
             );
           })}
@@ -1473,9 +1724,10 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
         </g>
       </svg>
 
-      <Compass view={view} W={W} H={H} wrap={wrapRef} />
+      {/* desktop only: on phones these live in the info row and the tool bar, never on top of the map */}
+      {!phone && <Compass view={view} W={W} H={H} wrap={wrapRef} />}
 
-      {ed.pickMode && (
+      {ed.pickMode && !phone && (
         <div className="absolute left-1/2 top-3 z-30 flex -translate-x-1/2 items-center gap-2 rounded-xl bg-violet-700 px-3 py-2 text-xs text-white shadow-lg">
           <span>
             {ed.pickMode === "object"
@@ -1497,24 +1749,24 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
       )}
 
       {/* scale bar */}
-      {ppm && <ScaleBar k={view.k} ppm={ppm} />}
+      {ppm && !phone && <ScaleBar k={view.k} ppm={ppm} />}
 
-      {/* floating finish button for touch */}
-      {drawing && (
-        <div className="absolute bottom-4 left-1/2 flex -translate-x-1/2 gap-2">
+      {/* finish / cancel for the line being drawn (phones have them in the tool bar) */}
+      {drawing && !phone && (
+        <div className="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 gap-2">
           {drawing.points.length >= (tool === "area" ? 3 : 2) && (
-            <button onClick={() => finishLine()} className="rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white shadow-lg">
+            <button onClick={() => finishLine()} className="rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white shadow-lg">
               סיום
             </button>
           )}
-          <button onClick={() => setDrawing(null)} className="rounded-full bg-white px-4 py-2 text-sm shadow-lg ring-1 ring-slate-200">
+          <button onClick={() => setDrawing(null)} className="rounded-full bg-white px-5 py-2.5 text-sm shadow-lg ring-1 ring-slate-200">
             ביטול
           </button>
         </div>
       )}
 
       {/* cable length tip for selected link */}
-      {selectedLink && selectedLink.kind === "cable" && (() => {
+      {selectedLink && selectedLink.kind === "cable" && !phone && (() => {
         const len = linkLengthM(selectedLink, ppm);
         return len ? (
           <div className="pointer-events-none absolute bottom-4 left-4 rounded-lg bg-slate-900/80 px-2 py-1 text-xs text-white">
@@ -1523,13 +1775,35 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
         ) : null;
       })()}
     </div>
+    </div>
+  );
+}
+
+/** Phones: north, the selected cable's length and the scale, in a row of their own above the map. */
+function PhoneMapInfo({ k, ppm, cableM }: { k: number; ppm?: number; cableM?: number }) {
+  const pxPerM = (ppm ?? 0) * k;
+  const m = [0.5, 1, 2, 5, 10, 20, 50, 100].find((n) => n * pxPerM >= 48) ?? 100;
+  return (
+    <div className="flex h-8 shrink-0 items-center gap-3 border-b border-slate-200 bg-white px-3 text-[11px] text-slate-600">
+      <span className="flex items-center gap-1 font-semibold">
+        <span aria-hidden>↑</span> צפון
+      </span>
+      {cableM ? <span className="truncate">אורך הכבל: {cableM.toFixed(1)} מ׳</span> : null}
+      {ppm ? (
+        <span className="ms-auto flex items-center gap-1.5">
+          {m} מ׳
+          <span className="h-1.5 border-x-2 border-b-2 border-slate-600" style={{ width: m * pxPerM }} />
+        </span>
+      ) : (
+        <span className="ms-auto text-slate-400">קנה מידה לא מכויל</span>
+      )}
+    </div>
   );
 }
 
 /** North / south / east / west labels just outside the plan; they stick to the screen edge when the plan runs off it. */
 function Compass({ view, W, H, wrap }: { view: View; W: number; H: number; wrap: React.RefObject<HTMLDivElement | null> }) {
   const [box, setBox] = useState({ w: 0, h: 0 });
-  const assistantOpen = useEditor((s) => s.assistantOpen);
   useEffect(() => {
     const el = wrap.current;
     if (!el) return;
@@ -1541,12 +1815,11 @@ function Compass({ view, W, H, wrap }: { view: View; W: number; H: number; wrap:
   }, [wrap]);
   if (!box.w) return null;
 
-  // the part of the canvas that is actually visible (not under the assistant card or the toolbar)
-  const inset = assistantInset(assistantOpen, box.w, box.h);
-  const x0 = inset.left + 28;
+  // the part of the canvas that is actually visible (not under the tool bar or the top buttons)
+  const x0 = 28;
   const x1 = box.w - 74; // tool bar on the right
   const y0 = 70; // layer / assistant buttons on top
-  const y1 = box.h - inset.bottom - 18;
+  const y1 = box.h - 18;
 
   const left = view.x;
   const top = view.y;
@@ -1587,15 +1860,6 @@ function Compass({ view, W, H, wrap }: { view: View; W: number; H: number; wrap:
       ))}
     </div>
   );
-}
-
-/**
- * Part of the canvas covered by the assistant. On desktop it lives in the side column next to the
- * canvas (covers nothing); on phones it is a bottom sheet over the lower 65%.
- */
-function assistantInset(open: boolean, _w: number, h: number) {
-  if (!open || window.innerWidth >= 768) return { left: 0, bottom: 0 };
-  return { left: 0, bottom: h * 0.65 };
 }
 
 /** clamp that never inverts: if the range is empty, use its middle */

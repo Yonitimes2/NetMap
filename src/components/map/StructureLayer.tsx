@@ -24,6 +24,8 @@ interface Props {
   onWallDown?: (e: React.PointerEvent, w: Wall) => void;
   onOpeningDown?: (e: React.PointerEvent, o: Opening) => void;
   onObstacleDown?: (e: React.PointerEvent, o: Obstacle) => void;
+  /** finger input: wider hit lines and bigger handles */
+  touch?: boolean;
 }
 
 export function wallColor(w: Wall, colorBy: "type" | "pass") {
@@ -38,6 +40,7 @@ export function wallWidth(w: Wall, ppm: number, s: number) {
 
 export function StructureLayer(p: Props) {
   const { ppm, s } = p;
+  const hs = p.touch ? 1.7 : 1;
   const byId = new Map(p.walls.map((w) => [w.id, w]));
   const sel = p.selection;
 
@@ -75,7 +78,7 @@ export function StructureLayer(p: Props) {
               x2={b.x}
               y2={b.y}
               stroke="transparent"
-              strokeWidth={Math.max(width, 14 * s)}
+              strokeWidth={Math.max(width, 14 * s * hs)}
               style={{ cursor: p.onWallDown ? "move" : "pointer" }}
               onPointerDown={(e) => (p.onWallDown ? p.onWallDown(e, w) : p.onPick(e, { kind: "wall", id: w.id }))}
             />
@@ -147,7 +150,7 @@ export function StructureLayer(p: Props) {
               x2={seg.p2.x}
               y2={seg.p2.y}
               stroke="transparent"
-              strokeWidth={Math.max(width, 16 * s)}
+              strokeWidth={Math.max(width, 16 * s * hs)}
               style={{ cursor: p.onOpeningDown ? "ew-resize" : "pointer" }}
               onPointerDown={(e) => (p.onOpeningDown ? p.onOpeningDown(e, o) : p.onPick(e, { kind: "opening", id: o.id }))}
             />
@@ -245,7 +248,7 @@ export function StructureLayer(p: Props) {
               key={end}
               cx={pos[end].x}
               cy={pos[end].y}
-              r={6 * s}
+              r={6 * s * hs}
               fill="#3b82f6"
               stroke="#fff"
               strokeWidth={2 * s}

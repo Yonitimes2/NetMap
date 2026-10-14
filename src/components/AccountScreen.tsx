@@ -62,7 +62,7 @@ function AccountBody({ accountId }: { accountId: string }) {
         <h1 className="text-2xl font-bold">{account.name}</h1>
         {role && <Badge color={role === "admin" ? "blue" : role === "super" ? "amber" : "slate"}>{ROLE_LABEL[role]}</Badge>}
       </div>
-      <div className="mb-5 flex gap-1 overflow-x-auto border-b border-slate-200">
+      <div className="mb-5 flex gap-1 overflow-x-auto border-b border-slate-200 no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
         {tabs.map((t) => (
           <button
             key={t.id}

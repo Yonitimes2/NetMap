@@ -28,3 +28,28 @@ body {
   user-select: none;
   -webkit-user-select: none;
 }
+
+/* phones (and touch screens): 16px text in fields stops iOS from zooming in when a field gets focus */
+@media (max-width: 767px), (pointer: coarse) {
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+}
+
+/* rows that scroll sideways (tabs, chips) without a visible scroll bar */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+/* space for the iPhone home bar / notch when installed as an app */
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.pt-safe {
+  padding-top: env(safe-area-inset-top);
+}

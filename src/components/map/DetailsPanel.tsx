@@ -3,6 +3,7 @@
 import { useMemo, useRef, useState } from "react";
 import {
   Camera,
+  ImagePlus,
   Copy,
   ExternalLink,
   Eye,
@@ -14,6 +15,7 @@ import {
 import { useApp } from "@/lib/store";
 import { storeImageFile, useImageSrc, deleteImage } from "@/lib/images";
 import { logAudit } from "@/lib/audit";
+import { toast } from "@/lib/toast";
 import {
   CABLE_RUNS,
   CABLE_TYPES,
@@ -216,7 +218,17 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
           <div className="grid grid-cols-2 gap-3">
             <Field label="כתובת IP">
               <div className="flex gap-1">
-                <Input value={d.net.ip ?? ""} readOnly={ro} onChange={(e) => upd({ net: { ...d.net, ip: e.target.value } })} className="ltr text-end" placeholder="192.168.1.10" />
+                <Input
+                  value={d.net.ip ?? ""}
+                  readOnly={ro}
+                  onChange={(e) => upd({ net: { ...d.net, ip: e.target.value } })}
+                  className="ltr text-end"
+                  placeholder="192.168.1.10"
+                  inputMode="decimal"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                {d.net.ip && <CopyButton value={d.net.ip} label="IP" />}
                 {d.net.ip && (
                   <a href={`http://${d.net.ip}`} target="_blank" rel="noreferrer" title="פתח ממשק ניהול" className="grid w-9 shrink-0 place-items-center rounded-lg text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50">
                     <ExternalLink size={14} />
@@ -233,7 +245,20 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
             </Field>
             {(["subnet", "gateway", "dns", "mac", "vlan"] as const).map((k) => (
               <Field key={k} label={{ subnet: "Subnet", gateway: "Gateway", dns: "DNS", mac: "MAC", vlan: "VLAN" }[k]}>
-                <Input value={d.net[k] ?? ""} readOnly={ro} onChange={(e) => upd({ net: { ...d.net, [k]: e.target.value } })} className="ltr text-end" />
+                <div className="flex gap-1">
+                  <Input
+                    value={d.net[k] ?? ""}
+                    readOnly={ro}
+                    onChange={(e) => upd({ net: { ...d.net, [k]: e.target.value } })}
+                    className="ltr text-end"
+                    // number pad with a dot for addresses; capitals for MAC
+                    inputMode={k === "mac" ? "text" : k === "vlan" ? "numeric" : "decimal"}
+                    autoCapitalize={k === "mac" ? "characters" : "none"}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  {k === "mac" && d.net.mac && <CopyButton value={d.net.mac} label="MAC" />}
+                </div>
               </Field>
             ))}
           </div>
@@ -544,9 +569,27 @@ function AddConnection({ d, devices }: { d: Device; devices: Device[] }) {
   );
 }
 
+/** Copies a value (IP, MAC) with one tap. */
+function CopyButton({ value, label }: { value: string; label: string }) {
+  return (
+    <button
+      type="button"
+      title={`העתק ${label}`}
+      aria-label={`העתק ${label}`}
+      onClick={() => {
+        void navigator.clipboard?.writeText(value).then(() => toast(`${label} הועתק`));
+      }}
+      className="grid w-9 shrink-0 place-items-center rounded-lg text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50"
+    >
+      <Copy size={14} />
+    </button>
+  );
+}
+
 function PhotosSection({ d, ro }: { d: Device; ro: boolean }) {
   const updateDevice = useApp((s) => s.updateDevice);
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [viewing, setViewing] = useState<string | null>(null);
   const onFiles = async (files: FileList | null) => {
@@ -560,6 +603,7 @@ function PhotosSection({ d, ro }: { d: Device; ro: boolean }) {
     } finally {
       setBusy(false);
       if (fileRef.current) fileRef.current.value = "";
+      if (cameraRef.current) cameraRef.current.value = "";
     }
   };
   return (
@@ -570,16 +614,27 @@ function PhotosSection({ d, ro }: { d: Device; ro: boolean }) {
         ))}
         {!ro && (
           <button
-            onClick={() => fileRef.current?.click()}
+            onClick={() => cameraRef.current?.click()}
             disabled={busy}
             className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 text-xs text-slate-500 hover:bg-slate-50"
           >
             <Camera size={18} />
-            {busy ? "שומר…" : "צלם / העלה"}
+            {busy ? "שומר…" : "צלם"}
+          </button>
+        )}
+        {!ro && !busy && (
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-slate-300 text-xs text-slate-500 hover:bg-slate-50"
+          >
+            <ImagePlus size={18} />
+            מהגלריה
           </button>
         )}
       </div>
-      <input ref={fileRef} type="file" accept="image/*" capture="environment" multiple hidden onChange={(e) => onFiles(e.target.files)} />
+      {/* the camera straight away on phones (computers just open a file picker) */}
+      <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => onFiles(e.target.files)} />
+      <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => onFiles(e.target.files)} />
       {viewing && (
         <Modal
           title={d.label}
