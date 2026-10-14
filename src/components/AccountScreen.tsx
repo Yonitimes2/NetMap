@@ -169,9 +169,13 @@ function UsersTab({ accountId }: { accountId: string }) {
   const setMemberRole = useApp((s) => s.setMemberRole);
   const removeMember = useApp((s) => s.removeMember);
   const members = memberships.filter((m) => m.accountId === accountId);
-  const [inviting, setInviting] = useState(false);
+  const [adding, setAdding] = useState<null | "owner" | "member">(null);
   const [f, setF] = useState({ name: "", email: "", role: "technician" as Role });
   const adminCount = members.filter((m) => m.role === "admin").length;
+  const open = (kind: "owner" | "member") => {
+    setF({ name: "", email: "", role: kind === "owner" ? "admin" : "technician" });
+    setAdding(kind);
+  };
 
   return (
     <>
@@ -179,11 +183,22 @@ function UsersTab({ accountId }: { accountId: string }) {
         <p className="text-sm text-slate-500">
           <b>מנהל</b>: גישה מלאה וניהול משתמשים. <b>טכנאי</b>: עריכת המיפוי וצפייה בסיסמאות, בלי ניהול משתמשים.
         </p>
-        <Button variant="primary" onClick={() => setInviting(true)}>
-          <UserPlus size={16} /> הזמן משתמש
+        <Button onClick={() => open("member")}>
+          <UserPlus size={16} /> הוספת משתמש
         </Button>
       </div>
-      <div className="divide-y divide-slate-100 rounded-2xl bg-white ring-1 ring-slate-200">
+      {adminCount === 0 && (
+        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-2xl bg-slate-50 p-4 ring-1 ring-slate-200">
+          <div className="min-w-0 flex-1 text-sm">
+            <div className="font-medium">עדיין אין בעל עסק בחשבון</div>
+            <div className="text-slate-500">לא חובה. מוסיפים אותו בסוף, כשהמיפוי מוכן למסירה. לא נשלח לו שום מייל.</div>
+          </div>
+          <Button variant="primary" onClick={() => open("owner")}>
+            <UserPlus size={16} /> הוספת בעל העסק
+          </Button>
+        </div>
+      )}
+      <div className="divide-y divide-slate-100 rounded-2xl bg-white ring-1 ring-slate-200 empty:hidden">
         {members.map((m) => {
           const u = users.find((x) => x.id === m.userId);
           const lastAdmin = m.role === "admin" && adminCount === 1;
@@ -220,21 +235,20 @@ function UsersTab({ accountId }: { accountId: string }) {
           );
         })}
       </div>
-      {inviting && (
+      {adding && (
         <Modal
-          title="הזמנת משתמש לחשבון"
-          onClose={() => setInviting(false)}
+          title={adding === "owner" ? "הוספת בעל העסק" : "הוספת משתמש לחשבון"}
+          onClose={() => setAdding(null)}
           footer={
             <Button
               variant="primary"
               disabled={!f.name.trim() || !/\S+@\S+/.test(f.email)}
               onClick={() => {
                 addMember(accountId, { name: f.name.trim(), email: f.email.trim() }, f.role);
-                setInviting(false);
-                setF({ name: "", email: "", role: "technician" });
+                setAdding(null);
               }}
             >
-              שלח הזמנה
+              הוספה
             </Button>
           }
         >
@@ -250,7 +264,7 @@ function UsersTab({ accountId }: { accountId: string }) {
               <option value="admin">{ROLE_LABEL.admin}</option>
             </Select>
           </Field>
-          <p className="text-xs text-slate-500">בגרסת הדמו המשתמש נוסף מיד. אחרי החיבור לשרת תישלח הזמנה במייל.</p>
+          <p className="text-xs text-slate-500">לא נשלח מייל. המשתמש נוסף לחשבון בלבד.</p>
         </Modal>
       )}
     </>

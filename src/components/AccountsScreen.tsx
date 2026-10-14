@@ -97,15 +97,11 @@ function NewAccountModal({ onClose }: { onClose: () => void }) {
   const createAccount = useApp((s) => s.createAccount);
   const createSite = useApp((s) => s.createSite);
   const router = useRouter();
-  const [f, setF] = useState({ name: "", businessType: "", address: "", phone: "", ownerName: "", ownerEmail: "" });
+  const [f, setF] = useState({ name: "", businessType: "", address: "", phone: "" });
   const upd = (k: keyof typeof f) => (e: React.ChangeEvent<HTMLInputElement>) => setF({ ...f, [k]: e.target.value });
-  const valid = f.name.trim() && f.ownerName.trim() && /\S+@\S+/.test(f.ownerEmail);
 
   const submit = () => {
-    const id = createAccount(
-      { name: f.name.trim(), businessType: f.businessType, address: f.address, phone: f.phone, contactName: f.ownerName },
-      { name: f.ownerName.trim(), email: f.ownerEmail.trim() },
-    );
+    const id = createAccount({ name: f.name.trim(), businessType: f.businessType, address: f.address, phone: f.phone });
     createSite(id, "אתר ראשי", f.address);
     router.push(`/a/${id}`);
   };
@@ -116,8 +112,8 @@ function NewAccountModal({ onClose }: { onClose: () => void }) {
       onClose={onClose}
       footer={
         <>
-          <Button variant="primary" disabled={!valid} onClick={submit}>
-            צור חשבון והזמן את בעל העסק
+          <Button variant="primary" disabled={!f.name.trim()} onClick={submit}>
+            צור חשבון
           </Button>
           <Button variant="ghost" onClick={onClose}>
             ביטול
@@ -139,18 +135,9 @@ function NewAccountModal({ onClose }: { onClose: () => void }) {
       <Field label="כתובת">
         <Input value={f.address} onChange={upd("address")} />
       </Field>
-      <div className="rounded-xl bg-slate-50 p-3">
-        <div className="mb-2 text-sm font-medium">בעל העסק (יקבל הרשאת מנהל)</div>
-        <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="שם *">
-            <Input value={f.ownerName} onChange={upd("ownerName")} />
-          </Field>
-          <Field label="אימייל *">
-            <Input type="email" value={f.ownerEmail} onChange={upd("ownerEmail")} className="ltr text-end" />
-          </Field>
-        </div>
-        <p className="mt-2 text-xs text-slate-500">אתה תצורף לחשבון כטכנאי.</p>
-      </div>
+      <p className="text-xs text-slate-500">
+        את בעל העסק מוסיפים בסוף, כשהמיפוי מוכן למסירה (לא חובה), בלשונית ״משתמשים והרשאות״. לא נשלח לו שום מייל.
+      </p>
     </Modal>
   );
 }

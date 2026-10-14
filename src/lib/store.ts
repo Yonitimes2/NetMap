@@ -58,9 +58,10 @@ interface Actions {
   setCurrentUser: (id: string) => void;
   resetDemo: () => void;
 
+  /** The owner is optional: usually added at the end, when the map is handed over. */
   createAccount: (
     a: Omit<Account, "id" | "createdAt">,
-    owner: { name: string; email: string },
+    owner?: { name: string; email: string },
   ) => string;
   updateAccount: (id: string, patch: Partial<Account>) => void;
   addMember: (accountId: string, user: { name: string; email: string }, role: Role) => void;
@@ -149,10 +150,21 @@ export const useApp = create<AppState>()(
         createAccount: (a, owner) => {
           const id = uid();
           set((s) => {
+            const account = { ...a, id, createdAt: Date.now() };
+            if (!owner) {
+              // no owner yet: a platform admin manages it as super-admin; anyone else needs a membership
+              const me = s.users.find((u) => u.id === s.currentUserId);
+              return {
+                accounts: [...s.accounts, account],
+                memberships: me?.superAdmin
+                  ? s.memberships
+                  : [...s.memberships, { userId: s.currentUserId, accountId: id, role: "admin" as Role }],
+              };
+            }
             const { users, userId } = findOrCreateUser(s.users, owner);
             return {
               users,
-              accounts: [...s.accounts, { ...a, id, createdAt: Date.now() }],
+              accounts: [...s.accounts, account],
               memberships: [
                 ...s.memberships,
                 { userId, accountId: id, role: "admin" },
