@@ -6,6 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AppShell } from "../AppShell";
 import { askConfirm } from "../dialogs";
 import { Badge, Button, Empty, Input, cx } from "../ui";
+import { BoxIcons, GeneralBadges, generalBadges } from "./ProductIcons";
 import { authApi, useSession } from "@/lib/session-client";
 import { toast } from "@/lib/toast";
 import { CAMERA_CATEGORIES, CATEGORY_LABEL, FORM_LABEL, paramChips, type CatalogCategory, type FormFactor, type ProductSummary } from "@/lib/products/types";
@@ -228,7 +229,7 @@ function ProductCard({ p }: { p: ProductSummary }) {
       <span className="grid size-20 shrink-0 place-items-center overflow-hidden rounded-xl bg-slate-50">
         {p.imageId ? (
           // eslint-disable-next-line @next/next/no-img-element -- served by our API with the session cookie
-          <img src={`/api/catalog/images/${p.imageId}`} alt="" loading="lazy" className="size-full object-contain" />
+          <img src={`/api/catalog/images/${p.imageId}?w=160`} alt="" loading="lazy" className="size-full object-contain" />
         ) : (
           <Package size={24} className="text-slate-300" />
         )}
@@ -239,6 +240,10 @@ function ProductCard({ p }: { p: ProductSummary }) {
           {p.status !== "active" && <Badge color={p.status === "review" ? "amber" : "slate"}>{p.status === "review" ? "לבדיקה" : "לא באתר"}</Badge>}
         </span>
         <span className="line-clamp-2 text-xs text-slate-500">{p.name}</span>
+        <span className="mt-1.5 flex flex-wrap items-center gap-1">
+          <BoxIcons icons={p.boxIcons} />
+          <GeneralBadges compact badges={generalBadges(p.category, p.params, p.boxIcons).slice(0, p.boxIcons.length ? 4 : 8)} />
+        </span>
         <span className="mt-1 flex flex-wrap gap-1">
           {paramChips(p.category, p.params)
             .slice(0, 6)

@@ -91,6 +91,15 @@ function analyticsOf(text: string, features: string[]): string[] {
   return [...out];
 }
 
+/** "Profile M/T/S/G" or the badge "ONVIF_T_S_G": "M/T/S/G" */
+function onvifOf(spec: string | undefined, features: string[]): string | undefined {
+  const fromSpec = spec?.match(/profile\s*([A-Z](?:\s*\/\s*[A-Z])*)/i)?.[1]?.replace(/\s/g, "").toUpperCase();
+  if (fromSpec) return fromSpec;
+  const badge = features.find((t) => /^ONVIF_/.test(t));
+  if (badge) return badge.slice(6).split("_").join("/");
+  return spec && /yes/i.test(spec) ? "כן" : undefined;
+}
+
 function cameraParams(x: NormalizeInput): ProductParams {
   const get = specLookup(x.specs);
   const f = x.features;
@@ -158,6 +167,9 @@ function cameraParams(x: NormalizeInput): ProductParams {
     dori: dori.detect || dori.recognize || dori.identify ? dori : undefined,
     thermalResolution: get(/thermal resolution/)?.replace(/×/g, "x"),
     sim4g: !!get(/sim card/) || f.includes("Cellular"),
+    onvif: onvifOf(get(/^onvif$/), f),
+    alarmIO: /alarm\s*in/i.test(get(/^alarm$/) ?? "") || !!(yes(get(/^alarm in$/)) && yes(get(/^alarm out$/))) || f.includes("Alarm_In_out"),
+    deterrence: f.includes("Active_Deterrence") || /strobe|siren|active deterrence/i.test(allText),
   };
 }
 

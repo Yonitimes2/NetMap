@@ -3,11 +3,12 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { db, type Row } from "../db";
 import { dataDir } from "../server-keys";
-import { effectiveParams, type CatalogCategory, type ProductFull, type ProductParams, type ProductSummary, type SpecGroup } from "./types";
+import { effectiveParams, type BoxIcon, type CatalogCategory, type ProductFull, type ProductParams, type ProductSummary, type SpecGroup } from "./types";
 
 /** Catalog storage (MySQL tables catalog_products / catalog_images, image files under the data dir). */
 
 const imgDir = () => path.join(/*turbopackIgnore: true*/ dataDir(), "catalog");
+const iconDir = () => path.join(/*turbopackIgnore: true*/ dataDir(), "catalog", "icons");
 const newId = (bytes: number) => randomBytes(bytes).toString("base64url");
 
 type ProductRow = Row & {
@@ -27,6 +28,7 @@ type ProductRow = Row & {
   params: ProductParams;
   overrides: ProductParams;
   images: string[];
+  box_icons: BoxIcon[] | null;
   page_url: string | null;
   datasheet_url: string | null;
   msrp: string | null;
@@ -46,6 +48,7 @@ const summary = (r: ProductRow): ProductSummary => ({
   deviceType: r.device_type,
   params: effectiveParams(r.params, r.overrides),
   imageId: r.images[0],
+  boxIcons: r.box_icons ?? [],
   status: r.status,
 });
 
@@ -122,9 +125,12 @@ export interface SourceProduct {
   msrp?: number;
 }
 
+/** Bump when the way parameters are derived changes, so the next update recomputes every product. */
+const NORMALIZE_VERSION = 2;
+
 export const sourceHash = (p: SourceProduct, imageUrls: string[]) =>
   createHash("sha256")
-    .update(JSON.stringify([p.name, p.description, p.overview, p.specs, p.features, p.datasheetUrl, p.msrp, imageUrls]))
+    .update(JSON.stringify([NORMALIZE_VERSION, p.name, p.description, p.overview, p.specs, p.features, p.datasheetUrl, p.msrp, imageUrls]))
     .digest("hex");
 
 /**
@@ -194,8 +200,55 @@ export async function setProductImages(productId: string, urls: string[], downlo
   await conn.query("UPDATE catalog_products SET images = ? WHERE id = ?", [JSON.stringify(ids), productId]);
 }
 
-export async function catalogImage(id: string): Promise<{ bytes: Buffer; mime: string } | null> {
+/** Stores the product's box icons; each icon image is downloaded once and shared. */
+export async function setBoxIcons(productId: string, icons: { name: string; url: string }[], download: (url: string) => Promise<{ bytes: Buffer; mime: string } | null>) {
+  const conn = await db();
+  const out: BoxIcon[] = [];
+  await mkdir(iconDir(), { recursive: true, mode: 0o700 });
+  for (const ic of icons) {
+    const [rows] = await conn.query<Row[]>("SELECT id FROM catalog_icons WHERE source_url = ?", [ic.url]);
+    let id = rows[0]?.id as string | undefined;
+    if (!id) {
+      const got = await download(ic.url);
+      if (!got) continue;
+      id = newId(18);
+      await writeFile(path.join(iconDir(), id), got.bytes, { mode: 0o600 });
+      await conn.query("INSERT INTO catalog_icons (id, source_url, name, mime, size, created_at) VALUES (?, ?, ?, ?, ?, ?)", [id, ic.url, ic.name, got.mime, got.bytes.length, new Date()]);
+    }
+    out.push({ name: ic.name, iconId: id });
+  }
+  await conn.query("UPDATE catalog_products SET box_icons = ? WHERE id = ?", [JSON.stringify(out), productId]);
+}
+
+export async function catalogIcon(id: string): Promise<{ bytes: Buffer; mime: string } | null> {
   if (!/^[A-Za-z0-9_-]{24}$/.test(id)) return null;
+  const [rows] = await (await db()).query<Row[]>("SELECT mime FROM catalog_icons WHERE id = ?", [id]);
+  if (!rows[0]) return null;
+  const bytes = await readFile(path.join(iconDir(), id)).catch(() => null);
+  return bytes ? { bytes, mime: rows[0].mime } : null;
+}
+
+/** Widths the catalog asks for: list cards, gallery thumbnails, the large product image. */
+export const IMAGE_WIDTHS = [160, 320, 800] as const;
+
+/**
+ * A product image, optionally scaled down to one of IMAGE_WIDTHS (as WebP, made once and kept on
+ * disk), so lists on a phone don't download full-size photos.
+ */
+export async function catalogImage(id: string, width?: number): Promise<{ bytes: Buffer; mime: string } | null> {
+  if (!/^[A-Za-z0-9_-]{24}$/.test(id)) return null;
+  if (width && (IMAGE_WIDTHS as readonly number[]).includes(width)) {
+    const thumb = path.join(imgDir(), "w", `${id}-${width}.webp`);
+    const cached = await readFile(thumb).catch(() => null);
+    if (cached) return { bytes: cached, mime: "image/webp" };
+    const orig = await catalogImage(id);
+    if (!orig) return null;
+    const { default: sharp } = await import("sharp");
+    const bytes = await sharp(orig.bytes).resize({ width, withoutEnlargement: true }).webp({ quality: 82 }).toBuffer();
+    await mkdir(path.dirname(thumb), { recursive: true, mode: 0o700 });
+    await writeFile(thumb, bytes, { mode: 0o600 });
+    return { bytes, mime: "image/webp" };
+  }
   const [rows] = await (await db()).query<Row[]>("SELECT mime FROM catalog_images WHERE id = ?", [id]);
   if (!rows[0]) return null;
   const bytes = await readFile(path.join(imgDir(), id)).catch(() => null);

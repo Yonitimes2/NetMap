@@ -61,6 +61,12 @@ export interface CameraParams {
   dori?: Dori;
   thermalResolution?: string;
   sim4g?: boolean;
+  /** ONVIF profiles, e.g. "T/S/G" */
+  onvif?: string;
+  /** alarm input / output contacts */
+  alarmIO?: boolean;
+  /** strobe light and siren (active deterrence) */
+  deterrence?: boolean;
 }
 
 export interface NvrParams {
@@ -102,6 +108,12 @@ export interface SpecGroup {
   items: { k: string; v: string }[];
 }
 
+/** One of the manufacturer's box icons, stored on our server. */
+export interface BoxIcon {
+  name: string;
+  iconId: string;
+}
+
 /** One row of the catalog list. */
 export interface ProductSummary {
   id: string;
@@ -115,6 +127,7 @@ export interface ProductSummary {
   /** source values with the admin's corrections applied */
   params: ProductParams;
   imageId?: string;
+  boxIcons: BoxIcon[];
   status: "active" | "discontinued" | "review";
 }
 
@@ -280,6 +293,9 @@ const CAMERA_FIELDS: ParamField[] = [
   { key: "sensor", label: "חיישן", kind: "text" },
   { key: "thermalResolution", label: "רזולוציה תרמית", kind: "text" },
   { key: "sim4g", label: "סים סלולרי", kind: "bool" },
+  { key: "onvif", label: "פרופילי ONVIF", kind: "text" },
+  { key: "alarmIO", label: "כניסות/יציאות אזעקה", kind: "bool" },
+  { key: "deterrence", label: "הרתעה אקטיבית", kind: "bool" },
 ];
 
 export const PARAM_FIELDS: Record<CatalogCategory, ParamField[]> = {

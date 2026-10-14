@@ -8,6 +8,7 @@ import { Badge, Button, Field, Input, Select, cx } from "../ui";
 import { authApi, useSession } from "@/lib/session-client";
 import { toast } from "@/lib/toast";
 import { DEVICE_TYPES } from "@/lib/catalog";
+import { BoxIcons, GeneralBadges, TechTiles, generalBadges, techTiles } from "./ProductIcons";
 import { CATEGORY_LABEL, PARAM_FIELDS, formatParam, type CatalogCategory, type Dori, type ParamField, type ProductFull } from "@/lib/products/types";
 
 /** One catalog product: images, planning parameters (with corrections) and the full spec table. */
@@ -73,6 +74,7 @@ export function ProductScreen() {
             </div>
 
             <div className="space-y-4">
+              <Highlights product={product} />
               <Params product={product} editable={isAdmin} onSave={save} />
               {product.overview.length > 0 && (
                 <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
@@ -93,19 +95,34 @@ export function ProductScreen() {
   );
 }
 
+/** What the product includes: the manufacturer's box icons, technical tiles and other features. */
+function Highlights({ product }: { product: ProductFull }) {
+  const tiles = techTiles(product.category, product.params);
+  const badges = generalBadges(product.category, product.params, product.boxIcons);
+  if (!product.boxIcons.length && !tiles.length && !badges.length) return null;
+  return (
+    <section className="space-y-3 rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+      <h2 className="font-semibold">מה כולל המוצר</h2>
+      <BoxIcons icons={product.boxIcons} size="lg" />
+      <TechTiles tiles={tiles} />
+      <GeneralBadges badges={badges} />
+    </section>
+  );
+}
+
 function Gallery({ ids }: { ids: string[] }) {
   const [current, setCurrent] = useState(0);
   if (!ids.length) return <div className="grid aspect-square place-items-center rounded-2xl bg-white text-sm text-slate-400 ring-1 ring-slate-200">אין תמונה</div>;
   return (
     <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200">
       {/* eslint-disable-next-line @next/next/no-img-element -- served by our API with the session cookie */}
-      <img src={`/api/catalog/images/${ids[Math.min(current, ids.length - 1)]}`} alt="" className="mx-auto aspect-square max-h-72 w-full object-contain lg:max-h-none" />
+      <img src={`/api/catalog/images/${ids[Math.min(current, ids.length - 1)]}?w=800`} alt="" className="mx-auto aspect-square max-h-72 w-full object-contain lg:max-h-none" />
       {ids.length > 1 && (
         <div className="mt-2 flex gap-2 overflow-x-auto">
           {ids.map((id, i) => (
             <button key={id} onClick={() => setCurrent(i)} className={cx("size-14 shrink-0 overflow-hidden rounded-lg ring-2", i === current ? "ring-blue-500" : "ring-transparent")}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/catalog/images/${id}`} alt="" loading="lazy" className="size-full object-contain" />
+              <img src={`/api/catalog/images/${id}?w=160`} alt="" loading="lazy" className="size-full object-contain" />
             </button>
           ))}
         </div>

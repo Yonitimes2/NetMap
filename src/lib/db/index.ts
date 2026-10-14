@@ -179,6 +179,19 @@ const STEPS: string[][] = [
     `INSERT INTO brands (id, name, website, sources, created_at, updated_at)
       VALUES ('provision-isr', 'Provision ISR', 'https://il.provision-isr.com', JSON_OBJECT('web', TRUE, 'excel', TRUE), NOW(3), NOW(3))`,
   ],
+  // 3: the manufacturer's box icons (one stored copy per icon image, shared by the products using it)
+  [
+    `CREATE TABLE catalog_icons (
+      id CHAR(24) NOT NULL PRIMARY KEY,
+      source_url VARCHAR(600) NOT NULL,
+      name VARCHAR(120) NOT NULL,
+      mime VARCHAR(40) NOT NULL,
+      size INT NOT NULL,
+      created_at DATETIME(3) NOT NULL,
+      UNIQUE KEY by_url (source_url)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `ALTER TABLE catalog_products ADD COLUMN box_icons JSON NULL`,
+  ],
 ];
 
 async function migrate(p: mysql.Pool) {

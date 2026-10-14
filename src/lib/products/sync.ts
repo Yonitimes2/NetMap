@@ -1,6 +1,6 @@
 import { normalizeProduct } from "./normalize";
 import { PROVISION_BRAND, PROVISION_CATEGORIES, categoryUrl, getPage, parseCategoryPage, parseProductPage, productUrl } from "./provision";
-import { finishRun, markDiscontinued, setProductImages, sourceHash, startRun, upsertFromSource } from "./store";
+import { finishRun, markDiscontinued, setBoxIcons, setProductImages, sourceHash, startRun, upsertFromSource } from "./store";
 import { deviceTypeFor, type CatalogCategory } from "./types";
 
 /**
@@ -128,6 +128,7 @@ async function runProvision(p: SyncProgress, opts: { limit?: number }) {
             if (got) p.stats.images++;
             return got;
           });
+          await setBoxIcons(id, raw.boxIcons, downloadImage);
         }
       } catch (e) {
         p.stats.failed++;

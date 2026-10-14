@@ -62,6 +62,8 @@ export interface RawProduct {
   imageUrls: string[];
   /** feature badges shown on the page (DDA1, IR_LED, NDAA, PoE, IP67…) */
   features: string[];
+  /** the manufacturer's main icons, as printed on the box (analytics, light, face, NDAA, lens, ONVIF) */
+  boxIcons: { name: string; url: string }[];
   datasheetUrl?: string;
   msrp?: number;
 }
@@ -128,6 +130,14 @@ export function parseProductPage(html: string, pageUrl: string): RawProduct {
   const features = [
     ...new Set([...html.matchAll(/Range_File_Images\/(?:Icon-Boxes|Main%20features%20icons)\/([A-Za-z0-9_%-]+)\.png/g)].map((m) => decodeURIComponent(m[1]))),
   ];
+  const boxIcons = [
+    ...new Map(
+      [...html.matchAll(/https?:\/\/(?:il\.)?provision-isr\.com\/wp-content\/uploads\/Range_File_Images\/Icon-Boxes\/([A-Za-z0-9_%-]+)\.png/g)].map((m) => [
+        m[1],
+        { name: decodeURIComponent(m[1]), url: m[0] },
+      ]),
+    ).values(),
+  ];
   const pid = html.match(/\?pid=(\d+)&(?:amp;)?ptype=pdf/)?.[1];
   const price = html.match(/₪\s*([\d,]+(?:\.\d+)?)/)?.[1];
 
@@ -139,6 +149,7 @@ export function parseProductPage(html: string, pageUrl: string): RawProduct {
     specs: uniqueSpecs,
     imageUrls: imageUrls.slice(0, 6),
     features,
+    boxIcons,
     datasheetUrl: pid ? `${pageUrl}?pid=${pid}&ptype=pdf` : undefined,
     msrp: price ? Number(price.replace(/,/g, "")) : undefined,
   };
