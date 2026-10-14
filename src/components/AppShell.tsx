@@ -2,13 +2,14 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ChevronLeft, MapPinned, RotateCcw, UserRound } from "lucide-react";
+import { ChevronLeft, LogOut, MapPinned, RotateCcw, Settings, UserRound, Users } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { useApp, useHydrated } from "@/lib/store";
 import { ROLE_LABEL } from "@/lib/access";
 import { DialogHost, askConfirm } from "./dialogs";
 import { useUndoShortcuts } from "@/lib/history";
 import { useToast } from "@/lib/toast";
+import { AUTH_ROLE_LABEL, logout, useSession } from "@/lib/session-client";
 
 export interface Crumb {
   label: string;
@@ -28,6 +29,10 @@ export function AppShell({
 }) {
   const ready = useHydrated();
   useUndoShortcuts();
+  const loadSession = useSession((s) => s.load);
+  useEffect(() => {
+    loadSession();
+  }, [loadSession]);
   return (
     <div className="flex h-dvh flex-col">
       <header className="z-30 flex h-14 shrink-0 items-center gap-2 border-b border-slate-200 bg-white px-3 sm:px-4">
@@ -93,6 +98,7 @@ function UserSwitcher() {
   const setCurrentUser = useApp((s) => s.setCurrentUser);
   const resetDemo = useApp((s) => s.resetDemo);
   const current = users.find((u) => u.id === currentUserId);
+  const me = useSession((s) => s.user);
 
   const describe = (userId: string) => {
     const u = users.find((x) => x.id === userId);
@@ -111,12 +117,31 @@ function UserSwitcher() {
         <span className="grid size-7 place-items-center rounded-full bg-blue-100 text-blue-700">
           <UserRound size={16} />
         </span>
-        <span className="hidden max-w-32 truncate md:inline">{current?.name}</span>
+        <span className="hidden max-w-32 truncate md:inline">{me?.name ?? current?.name}</span>
       </button>
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="absolute end-0 top-11 z-50 w-80 rounded-xl bg-white p-2 shadow-xl ring-1 ring-slate-200">
+          <div className="absolute end-0 top-11 z-50 max-h-[calc(100dvh-4rem)] w-80 max-w-[calc(100vw-1.5rem)] overflow-auto rounded-xl bg-white p-2 shadow-xl ring-1 ring-slate-200">
+            {me && (
+              <div className="mb-2 border-b border-slate-100 pb-2">
+                <div className="px-2 pt-1 text-sm font-semibold">{me.name}</div>
+                <div className="truncate px-2 text-xs text-slate-500">
+                  {me.email} · {AUTH_ROLE_LABEL[me.role]}
+                </div>
+                <Link href="/me" onClick={() => setOpen(false)} className="mt-1 flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-slate-50">
+                  <Settings size={15} className="text-slate-400" /> החשבון שלי: אימייל וסיסמה
+                </Link>
+                {me.role === "admin" && (
+                  <Link href="/admin/users" onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-slate-50">
+                    <Users size={15} className="text-slate-400" /> ניהול משתמשים
+                  </Link>
+                )}
+                <button onClick={logout} className="flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-slate-50">
+                  <LogOut size={15} className="text-slate-400" /> יציאה
+                </button>
+              </div>
+            )}
             <div className="px-2 py-1 text-xs font-medium text-amber-700">מצב דמו: החלפת משתמש לבדיקת הרשאות</div>
             {users.map((u) => (
               <button

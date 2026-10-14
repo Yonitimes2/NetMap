@@ -46,3 +46,6 @@ next-env.d.ts
 
 # local dev bridge between the space assistant and a Claude Code session
 /.netmap-bridge/
+
+# sign-in users and the session key (server side; never commit)
+/.netmap-data/
