@@ -16,9 +16,10 @@ export function LoginScreen() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // only same-site paths, so a crafted link can't send people elsewhere after signing in
+  // only app pages on this site, so a crafted link can't send people elsewhere after signing in;
+  // anything else (another site, /api, /_next, the old /_auth login page) goes home
   const raw = params.get("next") ?? "/";
-  const next = raw.startsWith("/") && !raw.startsWith("//") && !raw.startsWith("/login") ? raw : "/";
+  const next = /^\/(?![/\\_]|api(?:\/|$)|login(?:[/?]|$))/.test(raw) ? raw : "/";
 
   useEffect(() => {
     let alive = true;
