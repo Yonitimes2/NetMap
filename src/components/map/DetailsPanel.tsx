@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { useApp } from "@/lib/store";
 import { storeImageFile, useImageSrc, deleteImage } from "@/lib/images";
+import { logAudit } from "@/lib/audit";
 import {
   CABLE_RUNS,
   CABLE_TYPES,
@@ -353,7 +354,6 @@ function PrivacyWarning({ d }: { d: Device }) {
 
 function CredsSection({ d, accountId, ro, secretLabel }: { d: Device; accountId: string; ro: boolean; secretLabel?: string }) {
   const updateDevice = useApp((s) => s.updateDevice);
-  const logAudit = useApp((s) => s.logAudit);
   const [shown, setShown] = useState(false);
   const reveal = () => {
     if (!shown) logAudit(accountId, "צפה בסיסמאות של", d.id);

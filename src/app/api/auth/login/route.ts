@@ -1,4 +1,4 @@
-import { burnPasswordCheck, normEmail, publicUser, readUsers, verifyPassword } from "@/lib/auth/users";
+import { burnPasswordCheck, findUserByEmail, normEmail, publicUser, verifyPassword } from "@/lib/auth/users";
 import { clearFails, clientIp, jsonError, readJson, recordFail, startSession, throttled } from "@/lib/auth/current-user";
 
 export async function POST(req: Request) {
@@ -11,7 +11,7 @@ export async function POST(req: Request) {
   const wait = throttled(keys);
   if (wait) return jsonError(429, "throttled", `יותר מדי ניסיונות כושלים. נסו שוב בעוד ${wait} דקות.`);
 
-  const user = (await readUsers()).find((u) => u.email === email);
+  const user = await findUserByEmail(email);
   const ok = user ? await verifyPassword(password, user.hash) : (await burnPasswordCheck(password), false);
   if (!user || !ok) {
     recordFail(keys);

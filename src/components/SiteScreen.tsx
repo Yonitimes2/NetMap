@@ -12,6 +12,7 @@ import { SpaceAssistant } from "./map/SpaceAssistant";
 import { useEditor } from "./map/editor-store";
 import { useApp } from "@/lib/store";
 import { can, useRole } from "@/lib/access";
+import { useSync } from "@/lib/sync";
 import { deviceTypeById, layerById, linkTypeById } from "@/lib/catalog";
 import { linkLengthM } from "@/lib/graph";
 import { pdfPageCount, storeImageFile, storePdfPage } from "@/lib/images";
@@ -63,7 +64,9 @@ function SiteBody({ accountId, siteId }: { accountId: string; siteId: string }) 
 
   const floor = floors.find((f) => f.id === floorId) ?? floors.find((f) => f.order === Math.max(...floors.map((x) => x.order))) ?? floors[0];
   const canEdit = can.edit(role);
+  const syncReady = useSync((s) => s.ready);
 
+  if (!site && !syncReady) return <p className="w-full p-10 text-center text-slate-400">טוען…</p>;
   if (!site || !can.view(role)) {
     return (
       <div className="w-full p-6">

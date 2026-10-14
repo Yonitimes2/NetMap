@@ -6,7 +6,7 @@ import { useApp, type AppState } from "./store";
 import { toast } from "./toast";
 
 /**
- * Undo / redo for every data change in the app (not for chat, audit log or the current user).
+ * Undo / redo for every data change in the app (not for chat or changes that came from the server).
  * Works by watching the store: before each change the previous data is kept as a snapshot.
  * - All changes made in the same event (e.g. a room = 4 walls + a room) become one step.
  * - Repeated edits of the same item within a short time (typing in a field) become one step.
@@ -14,8 +14,6 @@ import { toast } from "./toast";
 
 const DATA_KEYS = [
   "accounts",
-  "memberships",
-  "users",
   "sites",
   "floors",
   "devices",
@@ -31,8 +29,6 @@ type Snap = Pick<AppState, DataKey>;
 
 const KEY_LABEL: Record<DataKey, string> = {
   accounts: "חשבונות",
-  memberships: "משתמשים",
-  users: "משתמשים",
   sites: "אתרים",
   floors: "קומות",
   devices: "ציוד",
@@ -125,6 +121,24 @@ function restore(from: Entry[], to: Entry[], verb: string) {
   }
   toast(`${verb}: ${e.label}`);
   publish();
+}
+
+/**
+ * Applies a store change without recording it. With `forget`, the undo history is cleared too:
+ * used when data arrives from the server, which older snapshots must not bring back.
+ */
+export function quietly(fn: () => void, forget = false) {
+  applying = true;
+  try {
+    fn();
+  } finally {
+    applying = false;
+  }
+  if (forget) {
+    past.length = 0;
+    future.length = 0;
+    publish();
+  }
 }
 
 // start recording as soon as the module loads in the browser (also after a hot reload in development)

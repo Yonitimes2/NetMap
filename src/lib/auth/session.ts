@@ -1,7 +1,5 @@
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { dataDir } from "./users";
+import { createHmac, timingSafeEqual } from "node:crypto";
+import { serverKey } from "../server-keys";
 
 /**
  * Session cookie: base64url(JSON payload) + "." + HMAC-SHA256 signature.
@@ -21,30 +19,8 @@ export interface SessionPayload {
   e: number;
 }
 
-let secret: Promise<Buffer> | undefined;
-
 /** AUTH_SECRET from the environment, or a random key generated once into the data dir. */
-function getSecret(): Promise<Buffer> {
-  secret ??= (async () => {
-    if (process.env.AUTH_SECRET) return Buffer.from(process.env.AUTH_SECRET);
-    const keyFile = path.join(dataDir(), "session.key");
-    try {
-      return Buffer.from((await readFile(keyFile, "utf8")).trim(), "hex");
-    } catch {
-      await mkdir(dataDir(), { recursive: true, mode: 0o700 });
-      const key = randomBytes(32).toString("hex");
-      try {
-        await writeFile(keyFile, key, { flag: "wx", mode: 0o600 });
-        return Buffer.from(key, "hex");
-      } catch {
-        // another request created it first
-        return Buffer.from((await readFile(keyFile, "utf8")).trim(), "hex");
-      }
-    }
-  })();
-  secret.catch(() => (secret = undefined));
-  return secret;
-}
+const getSecret = () => serverKey("AUTH_SECRET", "session.key");
 
 const sign = async (data: string) => createHmac("sha256", await getSecret()).update(data).digest();
 

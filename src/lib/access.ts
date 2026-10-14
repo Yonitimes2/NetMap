@@ -1,9 +1,11 @@
 "use client";
 
 import { useApp } from "./store";
+import { useSession } from "./session-client";
+import type { AccountRole } from "./account-doc";
 import type { Account, Role } from "./types";
 
-export type EffectiveRole = Role | "super" | null;
+export type EffectiveRole = AccountRole | null;
 
 export const ROLE_LABEL: Record<Role | "super", string> = {
   admin: "מנהל (בעל העסק)",
@@ -11,29 +13,17 @@ export const ROLE_LABEL: Record<Role | "super", string> = {
   super: "מנהל-על",
 };
 
-export function useCurrentUser() {
-  return useApp((s) => s.users.find((u) => u.id === s.currentUserId));
-}
+/** The signed-in user (see session-client.ts). */
+export const useCurrentUser = () => useSession((s) => s.user);
 
-/** Role of the current user in an account. Membership wins over super-admin. */
+/** The signed-in user's role in an account, as the server reported it. */
 export function useRole(accountId: string | undefined): EffectiveRole {
-  return useApp((s) => {
-    if (!accountId) return null;
-    const m = s.memberships.find((x) => x.accountId === accountId && x.userId === s.currentUserId);
-    if (m) return m.role;
-    const u = s.users.find((x) => x.id === s.currentUserId);
-    return u?.superAdmin ? "super" : null;
-  });
+  return useApp((s) => (accountId ? (s.meta[accountId]?.role ?? null) : null));
 }
 
+/** Every account in this browser's copy is one the server lets the user see. */
 export function useVisibleAccounts(): Account[] {
-  const accounts = useApp((s) => s.accounts);
-  const memberships = useApp((s) => s.memberships);
-  const user = useCurrentUser();
-  if (!user) return [];
-  if (user.superAdmin) return accounts;
-  const ids = new Set(memberships.filter((m) => m.userId === user.id).map((m) => m.accountId));
-  return accounts.filter((a) => ids.has(a.id));
+  return useApp((s) => s.accounts);
 }
 
 export const can = {

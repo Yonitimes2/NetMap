@@ -2,13 +2,17 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useState } from "react";
-import { Eye, Layers, MapPin, Plus, Trash2, UserPlus } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
+import { Eye, Layers, MapPin, Plus, Trash2, UserPlus, Wand2 } from "lucide-react";
 import { AppShell } from "./AppShell";
 import { Badge, Button, Empty, Field, Input, Modal, Select, cx } from "./ui";
 import { useApp } from "@/lib/store";
 import { askConfirm } from "./dialogs";
-import { ROLE_LABEL, can, useRole } from "@/lib/access";
+import { ROLE_LABEL, can, useCurrentUser, useRole } from "@/lib/access";
+import { PASSWORD_MIN, authApi } from "@/lib/session-client";
+import { useSync } from "@/lib/sync";
+import { toast } from "@/lib/toast";
+import { PasswordInput, randomPassword } from "./auth/PasswordInput";
 import type { Role } from "@/lib/types";
 
 export function AccountScreen() {
@@ -30,7 +34,9 @@ function AccountBody({ accountId }: { accountId: string }) {
   const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
   const role = useRole(accountId);
   const [tab, setTab] = useState<"sites" | "users" | "audit" | "details">("sites");
+  const syncReady = useSync((s) => s.ready);
 
+  if (!account && !syncReady) return <p className="p-10 text-center text-slate-400">טוען…</p>;
   if (!account || !can.view(role)) {
     return (
       <div className="p-6">
@@ -161,21 +167,45 @@ function SitesTab({ accountId }: { accountId: string }) {
   );
 }
 
+interface Member {
+  userId: string;
+  name: string;
+  email: string;
+  role: Role;
+}
+
+/** People with access to this business. Kept on the server; nothing is emailed to anyone. */
 function UsersTab({ accountId }: { accountId: string }) {
-  const memberships = useApp((s) => s.memberships);
-  const users = useApp((s) => s.users);
-  const currentUserId = useApp((s) => s.currentUserId);
-  const addMember = useApp((s) => s.addMember);
-  const setMemberRole = useApp((s) => s.setMemberRole);
-  const removeMember = useApp((s) => s.removeMember);
-  const members = memberships.filter((m) => m.accountId === accountId);
+  const me = useCurrentUser();
+  const myRole = useRole(accountId);
+  const saved = useApp((s) => (s.meta[accountId]?.rev ?? 0) > 0);
+  const [members, setMembers] = useState<Member[] | null>(null);
+  const [error, setError] = useState("");
   const [adding, setAdding] = useState<null | "owner" | "member">(null);
-  const [f, setF] = useState({ name: "", email: "", role: "technician" as Role });
-  const adminCount = members.filter((m) => m.role === "admin").length;
-  const open = (kind: "owner" | "member") => {
-    setF({ name: "", email: "", role: kind === "owner" ? "admin" : "technician" });
-    setAdding(kind);
+  const adminCount = members?.filter((m) => m.role === "admin").length ?? 0;
+
+  useEffect(() => {
+    if (!saved) return;
+    let alive = true;
+    authApi<{ members: Member[] }>(`/api/accounts/${accountId}/members`, "GET")
+      .then((r) => alive && setMembers(r.members))
+      .catch((e: Error) => alive && setError(e.message));
+    return () => {
+      alive = false;
+    };
+  }, [accountId, saved]);
+
+  const change = async (run: () => Promise<{ members: Member[] }>) => {
+    try {
+      setMembers((await run()).members);
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
   };
+
+  if (!saved) return <p className="p-6 text-center text-sm text-slate-500">העסק עוד נשמר בשרת. אפשר יהיה להוסיף משתמשים בעוד רגע.</p>;
+  if (error) return <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>;
+  if (!members) return <p className="p-6 text-center text-slate-400">טוען…</p>;
 
   return (
     <>
@@ -183,7 +213,7 @@ function UsersTab({ accountId }: { accountId: string }) {
         <p className="text-sm text-slate-500">
           <b>מנהל</b>: גישה מלאה וניהול משתמשים. <b>טכנאי</b>: עריכת המיפוי וצפייה בסיסמאות, בלי ניהול משתמשים.
         </p>
-        <Button onClick={() => open("member")}>
+        <Button onClick={() => setAdding("member")}>
           <UserPlus size={16} /> הוספת משתמש
         </Button>
       </div>
@@ -193,28 +223,28 @@ function UsersTab({ accountId }: { accountId: string }) {
             <div className="font-medium">עדיין אין בעל עסק בחשבון</div>
             <div className="text-slate-500">לא חובה. מוסיפים אותו בסוף, כשהמיפוי מוכן למסירה. לא נשלח לו שום מייל.</div>
           </div>
-          <Button variant="primary" onClick={() => open("owner")}>
+          <Button variant="primary" onClick={() => setAdding("owner")}>
             <UserPlus size={16} /> הוספת בעל העסק
           </Button>
         </div>
       )}
       <div className="divide-y divide-slate-100 rounded-2xl bg-white ring-1 ring-slate-200 empty:hidden">
         {members.map((m) => {
-          const u = users.find((x) => x.id === m.userId);
-          const lastAdmin = m.role === "admin" && adminCount === 1;
+          // a business admin can't remove the last admin role (they'd lock themselves out)
+          const locked = myRole !== "super" && m.role === "admin" && adminCount === 1;
           return (
             <div key={m.userId} className="flex flex-wrap items-center gap-3 p-3">
               <div className="min-w-0 flex-1">
                 <div className="font-medium">
-                  {u?.name} {m.userId === currentUserId && <span className="text-xs text-slate-400">(אתה)</span>}
+                  {m.name} {m.userId === me?.id && <span className="text-xs text-slate-400">(אתה)</span>}
                 </div>
-                <div className="ltr text-xs text-slate-500">{u?.email}</div>
+                <div className="ltr text-xs text-slate-500">{m.email}</div>
               </div>
               <Select
                 className="w-40"
                 value={m.role}
-                disabled={lastAdmin}
-                onChange={(e) => setMemberRole(accountId, m.userId, e.target.value as Role)}
+                disabled={locked}
+                onChange={(e) => change(() => authApi(`/api/accounts/${accountId}/members/${m.userId}`, "PATCH", { role: e.target.value }))}
               >
                 <option value="admin">{ROLE_LABEL.admin}</option>
                 <option value="technician">{ROLE_LABEL.technician}</option>
@@ -222,11 +252,11 @@ function UsersTab({ accountId }: { accountId: string }) {
               <Button
                 variant="danger"
                 size="sm"
-                disabled={lastAdmin}
-                title={lastAdmin ? "חייב להישאר לפחות מנהל אחד" : "הסר גישה"}
+                disabled={locked}
+                title={locked ? "חייב להישאר לפחות מנהל אחד" : "הסר גישה"}
                 onClick={async () =>
-                  (await askConfirm({ title: "הסרת גישה", message: `להסיר את הגישה של ${u?.name} לחשבון?`, danger: true, okLabel: "הסר" })) &&
-                  removeMember(accountId, m.userId)
+                  (await askConfirm({ title: "הסרת גישה", message: `להסיר את הגישה של ${m.name} לחשבון? הכניסה שלו למערכת נשארת.`, danger: true, okLabel: "הסר" })) &&
+                  change(() => authApi(`/api/accounts/${accountId}/members/${m.userId}`, "DELETE"))
                 }
               >
                 <Trash2 size={14} /> הסר
@@ -236,46 +266,106 @@ function UsersTab({ accountId }: { accountId: string }) {
         })}
       </div>
       {adding && (
-        <Modal
-          title={adding === "owner" ? "הוספת בעל העסק" : "הוספת משתמש לחשבון"}
+        <AddMemberModal
+          owner={adding === "owner"}
           onClose={() => setAdding(null)}
-          footer={
-            <Button
-              variant="primary"
-              disabled={!f.name.trim() || !/\S+@\S+/.test(f.email)}
-              onClick={() => {
-                addMember(accountId, { name: f.name.trim(), email: f.email.trim() }, f.role);
-                setAdding(null);
-              }}
-            >
-              הוספה
-            </Button>
-          }
-        >
-          <Field label="שם">
-            <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus />
-          </Field>
-          <Field label="אימייל">
-            <Input type="email" className="ltr text-end" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
-          </Field>
-          <Field label="תפקיד">
-            <Select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value as Role })}>
-              <option value="technician">{ROLE_LABEL.technician}</option>
-              <option value="admin">{ROLE_LABEL.admin}</option>
-            </Select>
-          </Field>
-          <p className="text-xs text-slate-500">לא נשלח מייל. המשתמש נוסף לחשבון בלבד.</p>
-        </Modal>
+          onAdd={async (body) => setMembers((await authApi<{ members: Member[] }>(`/api/accounts/${accountId}/members`, "POST", body)).members)}
+        />
       )}
     </>
   );
 }
 
+function AddMemberModal({
+  owner,
+  onClose,
+  onAdd,
+}: {
+  owner: boolean;
+  onClose: () => void;
+  onAdd: (body: { name: string; email: string; role: Role; password?: string }) => Promise<void>;
+}) {
+  const [f, setF] = useState({ name: "", email: "", role: (owner ? "admin" : "technician") as Role, password: "" });
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      await onAdd({ name: f.name.trim(), email: f.email.trim(), role: f.role, password: f.password || undefined });
+      toast(`${f.name.trim() || f.email.trim()} נוסף לעסק`);
+      onClose();
+    } catch (err) {
+      setError((err as Error).message);
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal
+      title={owner ? "הוספת בעל העסק" : "הוספת משתמש לחשבון"}
+      onClose={onClose}
+      footer={
+        <Button type="submit" form="member-form" variant="primary" disabled={busy || !/\S+@\S+/.test(f.email)}>
+          {busy ? "מוסיף…" : "הוספה"}
+        </Button>
+      }
+    >
+      <form id="member-form" onSubmit={save} className="space-y-3">
+        <Field label="שם">
+          <Input value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} autoFocus />
+        </Field>
+        <Field label="אימייל (משמש לכניסה)">
+          <Input type="email" className="ltr text-end" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} />
+        </Field>
+        <Field label="תפקיד">
+          <Select value={f.role} onChange={(e) => setF({ ...f, role: e.target.value as Role })}>
+            <option value="technician">{ROLE_LABEL.technician}</option>
+            <option value="admin">{ROLE_LABEL.admin}</option>
+          </Select>
+        </Field>
+        <Field label={`סיסמה ראשונה (לפחות ${PASSWORD_MIN} תווים)`}>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <PasswordInput value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} autoComplete="new-password" />
+            </div>
+            <Button type="button" onClick={() => setF({ ...f, password: randomPassword() })} title="יצירת סיסמה אקראית">
+              <Wand2 size={15} /> אקראית
+            </Button>
+          </div>
+          <p className="mt-1 text-xs text-slate-500">
+            רק אם אין לו עדיין כניסה ל-NetMap. מסרו לו את האימייל והסיסמה בעצמכם: לא נשלח מייל. אם כבר יש לו כניסה, הסיסמה שלו לא משתנה.
+          </p>
+        </Field>
+        {error && <p className="rounded-lg bg-red-50 p-2.5 text-sm text-red-700">{error}</p>}
+      </form>
+    </Modal>
+  );
+}
+
+interface AuditRow {
+  id: string;
+  userName: string;
+  at: number;
+  action: string;
+  target?: string;
+}
+
 function AuditTab({ accountId }: { accountId: string }) {
-  const audit = useApp((s) => s.audit);
-  const users = useApp((s) => s.users);
   const devices = useApp((s) => s.devices);
-  const rows = audit.filter((a) => a.accountId === accountId);
+  const [rows, setRows] = useState<AuditRow[] | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    let alive = true;
+    authApi<{ entries: AuditRow[] }>(`/api/accounts/${accountId}/audit`, "GET")
+      .then((r) => alive && setRows(r.entries))
+      .catch((e: Error) => alive && setError(e.message));
+    return () => {
+      alive = false;
+    };
+  }, [accountId]);
+  if (error) return <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>;
+  if (!rows) return <p className="p-6 text-center text-slate-400">טוען…</p>;
   if (!rows.length) return <Empty>עדיין לא נצפו סיסמאות בחשבון הזה.</Empty>;
   return (
     <div className="divide-y divide-slate-100 rounded-2xl bg-white ring-1 ring-slate-200">
@@ -283,8 +373,7 @@ function AuditTab({ accountId }: { accountId: string }) {
         <div key={r.id} className="flex items-center gap-3 p-3 text-sm">
           <Eye size={16} className="text-slate-400" />
           <div className="flex-1">
-            <b>{users.find((u) => u.id === r.userId)?.name}</b> {r.action}{" "}
-            <span className="text-slate-600">{devices.find((d) => d.id === r.target)?.label}</span>
+            <b>{r.userName}</b> {r.action} <span className="text-slate-600">{devices.find((d) => d.id === r.target)?.label}</span>
           </div>
           <div className="text-xs text-slate-400">{new Date(r.at).toLocaleString("he-IL")}</div>
         </div>

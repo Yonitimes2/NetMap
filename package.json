@@ -13,6 +13,7 @@
     "@anthropic-ai/sdk": "^0.133.0",
     "idb-keyval": "^6.3.0",
     "lucide-react": "^1.56.0",
+    "mysql2": "3.24.5",
     "nanoid": "^6.0.2",
     "next": "16.4.0",
     "pdfjs-dist": "^6.4.299",

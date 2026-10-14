@@ -5,8 +5,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist, type StateStorage } from "zustand/middleware";
 import { createStore, del, get, set as idbSet, type UseStore } from "idb-keyval";
 import { deviceTypeById } from "./catalog";
-import { demoData, demoRack, type AppData } from "./demo";
-import { demoPlanningFloor } from "./demo-space";
+import type { AccountRole } from "./account-doc";
 import type {
   Account,
   Area,
@@ -17,9 +16,7 @@ import type {
   MapNote,
   Obstacle,
   Opening,
-  Role,
   Site,
-  User,
   Wall,
 } from "./types";
 
@@ -32,9 +29,8 @@ import { uid } from "./ids";
 let dataStore: UseStore | undefined;
 const idb = () => (dataStore ??= createStore("netmap-data", "state"));
 const queued = new Map<string, string>();
-let writing = false;
+let writing: Promise<void> | null = null;
 async function pump() {
-  writing = true;
   try {
     while (queued.size) {
       const [name, value] = queued.entries().next().value!;
@@ -42,31 +38,87 @@ async function pump() {
       await idbSet(name, value, idb());
     }
   } finally {
-    writing = false;
+    writing = null;
   }
 }
 const idbStorage: StateStorage = {
   getItem: async (name) => (await get<string>(name, idb())) ?? null,
   setItem: (name, value) => {
     queued.set(name, value);
-    if (!writing) void pump();
+    writing ??= pump();
   },
   removeItem: (name) => del(name, idb()),
 };
 
-interface Actions {
-  setCurrentUser: (id: string) => void;
-  resetDemo: () => void;
+/** Business data cached in this browser. The server has the real copy (see sync.ts). */
+export interface AppData {
+  accounts: Account[];
+  sites: Site[];
+  floors: Floor[];
+  devices: Device[];
+  links: Link[];
+  areas: Area[];
+  notes: MapNote[];
+  walls: Wall[];
+  openings: Opening[];
+  obstacles: Obstacle[];
+  /** space-assistant chat per floor */
+  chats: Record<string, ChatMessage[]>;
+}
 
-  /** The owner is optional: usually added at the end, when the map is handed over. */
-  createAccount: (
-    a: Omit<Account, "id" | "createdAt">,
-    owner?: { name: string; email: string },
-  ) => string;
+/** What this browser knows about the server copy. */
+export interface SyncData {
+  /** the signed-in user the cached data belongs to */
+  ownerId: string | null;
+  /** per account: server revision of the cached data, and the user's role in it */
+  meta: Record<string, { rev: number; role: AccountRole }>;
+  /** accounts with changes not saved on the server yet (the number grows with each change) */
+  dirty: Record<string, number>;
+}
+
+export const emptyData = (): AppData & SyncData => ({
+  accounts: [],
+  sites: [],
+  floors: [],
+  devices: [],
+  links: [],
+  areas: [],
+  notes: [],
+  walls: [],
+  openings: [],
+  obstacles: [],
+  chats: {},
+  ownerId: null,
+  meta: {},
+  dirty: {},
+});
+
+/** Empties this browser's copy (on sign-out, or when another user signs in here). */
+export async function clearLocalData() {
+  useApp.setState(emptyData());
+  await writing;
+}
+
+// ---- data from before the server (kept per browser, offered for upload once) ----
+
+export interface LegacyData {
+  savedAt: number;
+  state: Partial<AppData>;
+  /** accounts already uploaded, or the user said not to */
+  done?: string[];
+  dismissed?: boolean;
+}
+
+export const readLegacy = async () => {
+  const raw = await get<string>("netmap-legacy", idb());
+  return raw ? (JSON.parse(raw) as LegacyData) : null;
+};
+export const writeLegacy = (l: LegacyData) => idbSet("netmap-legacy", JSON.stringify(l), idb());
+
+interface Actions {
+  /** New business (system admins). The owner is added later, on the users tab, if at all. */
+  createAccount: (a: Omit<Account, "id" | "createdAt">) => string;
   updateAccount: (id: string, patch: Partial<Account>) => void;
-  addMember: (accountId: string, user: { name: string; email: string }, role: Role) => void;
-  setMemberRole: (accountId: string, userId: string, role: Role) => void;
-  removeMember: (accountId: string, userId: string) => void;
 
   createSite: (accountId: string, name: string, address?: string) => string;
   updateSite: (id: string, patch: Partial<Site>) => void;
@@ -110,8 +162,6 @@ interface Actions {
   undoSpace: (undoId: string) => boolean;
   addChatMessage: (floorId: string, m: Omit<ChatMessage, "id" | "at">) => void;
   clearChat: (floorId: string) => void;
-
-  logAudit: (accountId: string, action: string, target?: string) => void;
 }
 
 export interface SpaceParts {
@@ -125,7 +175,7 @@ export interface SpaceParts {
 const spaceSnapshots = new Map<string, { floorId: string; parts: SpaceParts }>();
 export const canUndoSpace = (undoId?: string) => !!undoId && spaceSnapshots.has(undoId);
 
-export type AppState = AppData & { currentUserId: string } & Actions;
+export type AppState = AppData & SyncData & Actions;
 
 const patchById = <T extends { id: string }>(list: T[], id: string, patch: Partial<T>) =>
   list.map((x) => (x.id === id ? { ...x, ...patch } : x));
@@ -133,76 +183,18 @@ const patchById = <T extends { id: string }>(list: T[], id: string, patch: Parti
 export const useApp = create<AppState>()(
   persist(
     (set, getState) => {
-      const findOrCreateUser = (users: User[], u: { name: string; email: string }) => {
-        const existing = users.find((x) => x.email.toLowerCase() === u.email.toLowerCase());
-        if (existing) return { users, userId: existing.id };
-        const nu: User = { id: uid(), name: u.name, email: u.email };
-        return { users: [...users, nu], userId: nu.id };
-      };
-
       return {
-        ...demoData(),
-        currentUserId: "u-installer",
+        ...emptyData(),
 
-        setCurrentUser: (id) => set({ currentUserId: id }),
-        resetDemo: () => set({ ...demoData(), currentUserId: "u-installer" }),
-
-        createAccount: (a, owner) => {
+        createAccount: (a) => {
           const id = uid();
-          set((s) => {
-            const account = { ...a, id, createdAt: Date.now() };
-            if (!owner) {
-              // no owner yet: a platform admin manages it as super-admin; anyone else needs a membership
-              const me = s.users.find((u) => u.id === s.currentUserId);
-              return {
-                accounts: [...s.accounts, account],
-                memberships: me?.superAdmin
-                  ? s.memberships
-                  : [...s.memberships, { userId: s.currentUserId, accountId: id, role: "admin" as Role }],
-              };
-            }
-            const { users, userId } = findOrCreateUser(s.users, owner);
-            return {
-              users,
-              accounts: [...s.accounts, account],
-              memberships: [
-                ...s.memberships,
-                { userId, accountId: id, role: "admin" },
-                // the installer who opened the account stays on as technician
-                ...(s.currentUserId !== userId
-                  ? [{ userId: s.currentUserId, accountId: id, role: "technician" as Role }]
-                  : []),
-              ],
-            };
-          });
+          set((s) => ({
+            accounts: [...s.accounts, { ...a, id, createdAt: Date.now() }],
+            meta: { ...s.meta, [id]: { rev: 0, role: "super" } },
+          }));
           return id;
         },
         updateAccount: (id, patch) => set((s) => ({ accounts: patchById(s.accounts, id, patch) })),
-        addMember: (accountId, u, role) =>
-          set((s) => {
-            const { users, userId } = findOrCreateUser(s.users, u);
-            const exists = s.memberships.some((m) => m.accountId === accountId && m.userId === userId);
-            return {
-              users,
-              memberships: exists
-                ? s.memberships.map((m) =>
-                    m.accountId === accountId && m.userId === userId ? { ...m, role } : m,
-                  )
-                : [...s.memberships, { userId, accountId, role }],
-            };
-          }),
-        setMemberRole: (accountId, userId, role) =>
-          set((s) => ({
-            memberships: s.memberships.map((m) =>
-              m.accountId === accountId && m.userId === userId ? { ...m, role } : m,
-            ),
-          })),
-        removeMember: (accountId, userId) =>
-          set((s) => ({
-            memberships: s.memberships.filter(
-              (m) => !(m.accountId === accountId && m.userId === userId),
-            ),
-          })),
 
         createSite: (accountId, name, address) => {
           const id = uid();
@@ -409,47 +401,20 @@ export const useApp = create<AppState>()(
             },
           })),
         clearChat: (floorId) => set((s) => ({ chats: { ...s.chats, [floorId]: [] } })),
-
-        logAudit: (accountId, action, target) =>
-          set((s) => ({
-            audit: [
-              { id: uid(), accountId, userId: getState().currentUserId, at: Date.now(), action, target },
-              ...s.audit,
-            ].slice(0, 500),
-          })),
       };
     },
     {
       name: "netmap",
-      version: 3,
+      version: 4,
       migrate: (persisted, version) => {
-        const s = persisted as Partial<AppData>;
-        if (version < 2) {
-          s.walls ??= [];
-          s.openings ??= [];
-          s.obstacles ??= [];
-          s.chats ??= {};
-          // add the "planned without a drawing" demo floor to the demo office, if it still exists
-          if (s.sites?.some((x) => x.id === "site-cohen-tlv") && !s.floors?.some((f) => f.id === "fl-cohen-4")) {
-            const p = demoPlanningFloor("site-cohen-tlv");
-            s.floors = [...(s.floors ?? []), p.floor];
-            s.walls = [...s.walls, ...p.walls];
-            s.openings = [...s.openings, ...p.openings];
-            s.obstacles = [...s.obstacles, ...p.obstacles];
-            s.areas = [...(s.areas ?? []), ...p.areas];
-          }
+        if (version < 4) {
+          // before v4 everything lived only in this browser (with demo users): keep it aside so it can
+          // be uploaded to the server, and start the cache empty
+          const old = persisted as Partial<AppData> | undefined;
+          if (old?.accounts?.length) void writeLegacy({ savedAt: Date.now(), state: old });
+          return emptyData() as AppState;
         }
-        if (version < 3) {
-          // demo office rack gets its cabinet build and mounted equipment
-          s.devices = s.devices?.map((d) => {
-            if (d.id !== "a-rack" || d.rack) return d;
-            const ids = new Set(s.devices!.map((x) => x.id));
-            const rack = demoRack();
-            rack.items = rack.items.map((i) => (i.deviceId && !ids.has(i.deviceId) ? { ...i, deviceId: undefined } : i));
-            return { ...d, rack };
-          });
-        }
-        return s as AppState;
+        return persisted as AppState;
       },
       storage: createJSONStorage(() => idbStorage),
       skipHydration: true,

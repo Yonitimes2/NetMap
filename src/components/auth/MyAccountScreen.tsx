@@ -7,7 +7,8 @@ import { AppShell } from "../AppShell";
 import { Badge, Button, Field, Input } from "../ui";
 import { PasswordInput } from "./PasswordInput";
 import { toast } from "@/lib/toast";
-import { AUTH_ROLE_LABEL, PASSWORD_MIN, authApi, logout, useSession, type SessionUser } from "@/lib/session-client";
+import { AUTH_ROLE_LABEL, PASSWORD_MIN, authApi, useSession, type SessionUser } from "@/lib/session-client";
+import { signOut } from "@/lib/sync";
 
 /** "החשבון שלי": change my name, email and password. */
 export function MyAccountScreen() {
@@ -35,7 +36,7 @@ export function MyAccountScreen() {
                     <Users size={16} /> ניהול משתמשים
                   </Link>
                 )}
-                <Button onClick={logout}>
+                <Button onClick={() => void signOut()}>
                   <LogOut size={16} /> יציאה
                 </Button>
               </div>

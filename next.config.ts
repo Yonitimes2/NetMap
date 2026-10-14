@@ -6,6 +6,8 @@ const nextConfig: NextConfig = {
   // the indicator sits on top of the map's bottom-left controls; errors still surface without it
   devIndicators: false,
   partialPrefetching: true,
+  // the MySQL driver loads parts of itself at runtime; leave it to Node instead of bundling it
+  serverExternalPackages: ["mysql2"],
   turbopack: {
     rules: {
       "*.css": {

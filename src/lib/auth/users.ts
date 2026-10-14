@@ -1,13 +1,11 @@
 import { randomBytes, randomUUID, scrypt, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { PASSWORD_MIN, type AuthRole } from "./policy";
+import { db, type Conn, type Row } from "../db";
 
 /**
- * Sign-in users, kept on the server in one JSON file until NetMap moves to Supabase.
- * Passwords are stored only as scrypt hashes.
- *
- * Location: $NETMAP_DATA_DIR/users.json (default .netmap-data/ in the project, git-ignored).
+ * Sign-in users, in the MySQL "users" table. Passwords are stored only as scrypt hashes.
+ * $NETMAP_DATA_DIR (default .netmap-data/ in the project, git-ignored) holds the session and
+ * data keys and uploaded files.
  */
 
 export { AUTH_ROLE_LABEL, PASSWORD_MIN, type AuthRole } from "./policy";
@@ -38,8 +36,6 @@ export const publicUser = (u: AuthUser): PublicUser => ({
   createdAt: u.createdAt,
 });
 
-export const dataDir = () => process.env.NETMAP_DATA_DIR || path.join(process.cwd(), ".netmap-data");
-const file = () => path.join(dataDir(), "users.json");
 
 // ---------- validation ----------
 
@@ -89,44 +85,86 @@ export async function burnPasswordCheck(password: string) {
   await verifyPassword(password, await dummyHash);
 }
 
-// ---------- storage ----------
+// ---------- storage (MySQL table "users") ----------
 
-export async function readUsers(): Promise<AuthUser[]> {
-  try {
-    const parsed = JSON.parse(await readFile(file(), "utf8")) as { users?: AuthUser[] };
-    return Array.isArray(parsed.users) ? parsed.users : [];
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "ENOENT") return [];
-    throw e;
-  }
-}
+type UserRow = Row & {
+  id: string;
+  email: string;
+  name: string;
+  role: AuthRole;
+  hash: string;
+  session_version: number;
+  created_at: Date;
+  updated_at: Date;
+};
 
-async function writeUsers(users: AuthUser[]) {
-  await mkdir(dataDir(), { recursive: true, mode: 0o700 });
-  // write-then-rename, so a crash never leaves a half-written file
-  const tmp = `${file()}.${process.pid}.tmp`;
-  await writeFile(tmp, JSON.stringify({ users }, null, 2), { mode: 0o600 });
-  await rename(tmp, file());
-}
+const fromRow = (r: UserRow): AuthUser => ({
+  id: r.id,
+  email: r.email,
+  name: r.name,
+  role: r.role,
+  hash: r.hash,
+  sessionVersion: r.session_version,
+  createdAt: r.created_at.toISOString(),
+  updatedAt: r.updated_at.toISOString(),
+});
 
-let queue: Promise<unknown> = Promise.resolve();
+const COLS = "id, email, name, role, hash, session_version, created_at, updated_at";
 
-/**
- * Read-modify-write under a lock. `fn` returns the new list (or undefined to leave the file as is)
- * plus a result for the caller.
- */
-export function updateUsers<T>(fn: (users: AuthUser[]) => Promise<{ users?: AuthUser[]; result: T }> | { users?: AuthUser[]; result: T }): Promise<T> {
-  const run = queue.then(async () => {
-    const { users, result } = await fn(await readUsers());
-    if (users) await writeUsers(users);
-    return result;
-  });
-  queue = run.catch(() => {});
-  return run;
+export async function readUsers(c?: Conn): Promise<AuthUser[]> {
+  const [rows] = await (c ?? (await db())).query<UserRow[]>(`SELECT ${COLS} FROM users ORDER BY created_at`);
+  return rows.map(fromRow);
 }
 
 export async function findUser(id: string) {
-  return (await readUsers()).find((u) => u.id === id);
+  const [rows] = await (await db()).query<UserRow[]>(`SELECT ${COLS} FROM users WHERE id = ?`, [id]);
+  return rows[0] ? fromRow(rows[0]) : undefined;
+}
+
+export async function findUserByEmail(email: string) {
+  const [rows] = await (await db()).query<UserRow[]>(`SELECT ${COLS} FROM users WHERE email = ?`, [email]);
+  return rows[0] ? fromRow(rows[0]) : undefined;
+}
+
+/**
+ * Read-modify-write of the whole (small) user list in one transaction, one writer at a time,
+ * so rules like "keep at least one admin" hold. `fn` returns the new list (or undefined to leave
+ * it as is) plus a result for the caller.
+ */
+export async function updateUsers<T>(fn: (users: AuthUser[]) => Promise<{ users?: AuthUser[]; result: T }> | { users?: AuthUser[]; result: T }): Promise<T> {
+  const c = await (await db()).getConnection();
+  try {
+    // serializes user changes across requests (and server processes); released after the commit
+    await c.query("SELECT GET_LOCK('netmap_users', 10)");
+    await c.beginTransaction();
+    const before = await readUsers(c);
+    const { users, result } = await fn(before);
+    if (users) await writeChanges(c, before, users);
+    await c.commit();
+    return result;
+  } catch (e) {
+    await c.rollback().catch(() => {});
+    throw e;
+  } finally {
+    await c.query("SELECT RELEASE_LOCK('netmap_users')").catch(() => {});
+    c.release();
+  }
+}
+
+async function writeChanges(c: Conn, before: AuthUser[], after: AuthUser[]) {
+  const old = new Map(before.map((u) => [u.id, u]));
+  const now = new Set(after.map((u) => u.id));
+  for (const u of before) if (!now.has(u.id)) await c.query("DELETE FROM users WHERE id = ?", [u.id]);
+  for (const u of after) {
+    const prev = old.get(u.id);
+    if (prev === u) continue;
+    const vals = [u.email, u.name, u.role, u.hash, u.sessionVersion, new Date(u.createdAt), new Date(u.updatedAt)];
+    if (!prev) {
+      await c.query("INSERT INTO users (id, email, name, role, hash, session_version, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [u.id, ...vals]);
+    } else {
+      await c.query("UPDATE users SET email = ?, name = ?, role = ?, hash = ?, session_version = ?, created_at = ?, updated_at = ? WHERE id = ?", [...vals, u.id]);
+    }
+  }
 }
 
 export function newUser(fields: { email: string; name: string; role: AuthRole; hash: string }): AuthUser {

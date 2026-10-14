@@ -8,6 +8,8 @@ import { AppShell } from "./AppShell";
 import { Badge, Button, Empty, Field, Input, Modal } from "./ui";
 import { useApp } from "@/lib/store";
 import { ROLE_LABEL, useCurrentUser, useVisibleAccounts } from "@/lib/access";
+import { useSync } from "@/lib/sync";
+import { ImportLocalData } from "./ImportLocalData";
 
 export function AccountsScreen() {
   return (
@@ -22,8 +24,10 @@ function AccountsList() {
   const accounts = useVisibleAccounts();
   const sites = useApp((s) => s.sites);
   const devices = useApp((s) => s.devices);
-  const memberships = useApp((s) => s.memberships);
+  const meta = useApp((s) => s.meta);
+  const syncReady = useSync((s) => s.ready);
   const [creating, setCreating] = useState(false);
+  const isAdmin = user?.role === "admin";
 
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-6">
@@ -31,25 +35,31 @@ function AccountsList() {
         <div>
           <h1 className="text-2xl font-bold">שלום, {user?.name}</h1>
           <p className="text-sm text-slate-500">
-            {user?.superAdmin ? "כל חשבונות העסקים בפלטפורמה" : "בחר את העסק שתרצה לנהל"}
+            {isAdmin ? "כל חשבונות העסקים בפלטפורמה" : "בחר את העסק שתרצה לנהל"}
           </p>
         </div>
-        {user?.superAdmin && (
+        {isAdmin && (
           <Button variant="primary" onClick={() => setCreating(true)}>
             <Plus size={16} /> חשבון עסק חדש
           </Button>
         )}
       </div>
 
+      {isAdmin && <ImportLocalData />}
+
       {accounts.length === 0 ? (
-        <Empty>אין לך עדיין גישה לחשבון עסק. בקש מבעל העסק להזמין אותך.</Empty>
+        !syncReady ? (
+          <p className="p-10 text-center text-slate-400">טוען…</p>
+        ) : (
+          <Empty>{isAdmin ? "עדיין אין עסקים. פתחו חשבון עסק חדש." : "אין לך עדיין גישה לחשבון עסק. בקש ממנהל המערכת להוסיף אותך."}</Empty>
+        )
       ) : (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {accounts.map((a) => {
             const accSites = sites.filter((s) => s.accountId === a.id);
             const siteIds = new Set(accSites.map((s) => s.id));
             const devCount = devices.filter((d) => siteIds.has(d.siteId)).length;
-            const role = memberships.find((m) => m.accountId === a.id && m.userId === user?.id)?.role;
+            const role = meta[a.id]?.role;
             return (
               <Link
                 key={a.id}
@@ -64,11 +74,7 @@ function AccountsList() {
                     <div className="truncate font-semibold">{a.name}</div>
                     <div className="truncate text-xs text-slate-500">{a.businessType}</div>
                   </div>
-                  {role ? (
-                    <Badge color={role === "admin" ? "blue" : "slate"}>{ROLE_LABEL[role]}</Badge>
-                  ) : (
-                    <Badge color="amber">{ROLE_LABEL.super}</Badge>
-                  )}
+                  {role && role !== "super" && <Badge color={role === "admin" ? "blue" : "slate"}>{ROLE_LABEL[role]}</Badge>}
                 </div>
                 {a.address && (
                   <div className="mt-3 flex items-center gap-1 text-xs text-slate-500">
