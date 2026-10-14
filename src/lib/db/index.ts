@@ -8,7 +8,7 @@ import { dataDir } from "../server-keys";
  * only needs to exist (with a user that owns it) and DATABASE_URL pointing at it.
  */
 
-const g = globalThis as unknown as { __netmapPool?: mysql.Pool; __netmapReady?: Promise<void> };
+const g = globalThis as unknown as { __netmapPool?: mysql.Pool; __netmapReady?: Promise<void>; __netmapSteps?: number };
 
 function pool(): mysql.Pool {
   if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is not set");
@@ -26,6 +26,11 @@ function pool(): mysql.Pool {
 /** The pool, after the schema is in place. */
 export async function db(): Promise<mysql.Pool> {
   const p = pool();
+  // new schema steps (e.g. after a code change in development) are applied on the next use
+  if (g.__netmapSteps !== STEPS.length) {
+    g.__netmapSteps = STEPS.length;
+    g.__netmapReady = undefined;
+  }
   g.__netmapReady ??= migrate(p).catch((e) => {
     g.__netmapReady = undefined;
     throw e;
@@ -109,6 +114,70 @@ const STEPS: string[][] = [
       KEY by_account (account_id),
       FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  ],
+  // 2: product catalog (brands, their products with planning parameters, images, update runs)
+  [
+    `CREATE TABLE brands (
+      id VARCHAR(40) NOT NULL PRIMARY KEY,
+      name VARCHAR(120) NOT NULL,
+      website VARCHAR(300) NULL,
+      sources JSON NOT NULL,
+      created_at DATETIME(3) NOT NULL,
+      updated_at DATETIME(3) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    // params: read from the source; overrides: the admin's corrections (an update never touches them)
+    `CREATE TABLE catalog_products (
+      id CHAR(16) NOT NULL PRIMARY KEY,
+      brand_id VARCHAR(40) NOT NULL,
+      model VARCHAR(80) NOT NULL,
+      slug VARCHAR(160) NULL,
+      category VARCHAR(20) NOT NULL,
+      device_type VARCHAR(20) NOT NULL,
+      device_type_manual TINYINT(1) NOT NULL DEFAULT 0,
+      name VARCHAR(500) NOT NULL DEFAULT '',
+      description TEXT NULL,
+      overview JSON NOT NULL,
+      specs JSON NOT NULL,
+      features JSON NOT NULL,
+      params JSON NOT NULL,
+      overrides JSON NOT NULL,
+      images JSON NOT NULL,
+      page_url VARCHAR(500) NULL,
+      datasheet_url VARCHAR(500) NULL,
+      msrp DECIMAL(10,2) NULL,
+      status VARCHAR(16) NOT NULL DEFAULT 'active',
+      source_hash CHAR(64) NULL,
+      fetched_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL,
+      updated_at DATETIME(3) NOT NULL,
+      UNIQUE KEY brand_model (brand_id, model),
+      KEY by_category (category),
+      FOREIGN KEY (brand_id) REFERENCES brands(id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    // image contents on disk: $NETMAP_DATA_DIR/catalog/<id>
+    `CREATE TABLE catalog_images (
+      id CHAR(24) NOT NULL PRIMARY KEY,
+      product_id CHAR(16) NOT NULL,
+      source_url VARCHAR(600) NOT NULL,
+      mime VARCHAR(40) NOT NULL,
+      size INT NOT NULL,
+      created_at DATETIME(3) NOT NULL,
+      KEY by_product (product_id),
+      FOREIGN KEY (product_id) REFERENCES catalog_products(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE catalog_sync_runs (
+      id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
+      brand_id VARCHAR(40) NOT NULL,
+      source VARCHAR(20) NOT NULL,
+      started_at DATETIME(3) NOT NULL,
+      finished_at DATETIME(3) NULL,
+      status VARCHAR(16) NOT NULL,
+      stats JSON NOT NULL,
+      log MEDIUMTEXT NULL,
+      KEY by_brand (brand_id, started_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `INSERT INTO brands (id, name, website, sources, created_at, updated_at)
+      VALUES ('provision-isr', 'Provision ISR', 'https://il.provision-isr.com', JSON_OBJECT('web', TRUE, 'excel', TRUE), NOW(3), NOW(3))`,
   ],
 ];
 
