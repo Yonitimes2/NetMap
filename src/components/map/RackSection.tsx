@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ArrowDown, ArrowUp, MapPin, Plus, Trash2, Wand2 } from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronLeft, Plus, Trash2, Wand2 } from "lucide-react";
 import { useApp, uid } from "@/lib/store";
 import { deviceTypeById } from "@/lib/catalog";
 import { DEFAULT_PPM } from "@/lib/space-catalog";
@@ -227,6 +227,44 @@ export function RackSection({ d, ro, onGoto }: { d: Device; ro: boolean; onGoto:
         onMove={(id, u) => updateItem(id, { u })}
       />
 
+      {/* what's in it, top to bottom: tap a row to select it, "פתיחה" opens the equipment itself */}
+      {items.length > 0 && (
+        <div>
+          <div className="mb-1 text-xs font-medium text-slate-500">מה בארון</div>
+          <ul className="divide-y divide-slate-100 rounded-xl ring-1 ring-slate-200">
+            {[...items]
+              .sort((a, b) => b.u - a.u)
+              .map((it) => {
+                const dev = it.deviceId ? siteDevices.find((x) => x.id === it.deviceId) : undefined;
+                const Icon = dev ? deviceTypeById(dev.type).icon : null;
+                return (
+                  <li key={it.id} className={cx("flex items-center gap-2 px-2.5 py-1.5", it.id === selId && "bg-amber-50")}>
+                    <button onClick={() => setSelId(it.id)} className="flex min-w-0 flex-1 items-center gap-2 text-start">
+                      <span className="ltr w-12 shrink-0 text-[11px] text-slate-400">
+                        U{it.u}
+                        {it.height > 1 ? `–${it.u + it.height - 1}` : ""}
+                      </span>
+                      <span className="size-2.5 shrink-0 rounded-sm" style={{ background: rackItemDef(it.kind).color }} />
+                      {Icon && <Icon size={14} className="shrink-0 text-slate-500" />}
+                      <span className="min-w-0">
+                        <span className="block truncate text-sm">{it.label}</span>
+                        <span className="block truncate text-[11px] text-slate-400">
+                          {dev ? [dev.product?.model ?? dev.model, deviceTypeById(dev.type).label].filter(Boolean).join(" · ") : `${rackItemDef(it.kind).label} · לא מקושר לציוד`}
+                        </span>
+                      </span>
+                    </button>
+                    {dev && (
+                      <button onClick={() => onGoto(dev.id)} className="flex h-9 shrink-0 items-center gap-0.5 rounded-lg px-2.5 text-sm font-medium text-blue-700 ring-1 ring-blue-200 hover:bg-blue-50 sm:h-8">
+                        פתיחה <ChevronLeft size={14} />
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
+          </ul>
+        </div>
+      )}
+
       {!ro && (
         <div>
           <div className="mb-1 text-xs font-medium text-slate-500">
@@ -317,13 +355,13 @@ export function RackSection({ d, ro, onGoto }: { d: Device; ro: boolean; onGoto:
                     </option>
                   ))}
               </Select>
-              {sel.deviceId && (
-                <button title="עבור לציוד במפה" onClick={() => onGoto(sel.deviceId!)} className="grid w-9 shrink-0 place-items-center rounded-lg ring-1 ring-slate-200 hover:bg-white">
-                  <MapPin size={14} />
-                </button>
-              )}
             </div>
           </Field>
+          {sel.deviceId && siteDevices.some((x) => x.id === sel.deviceId) && (
+            <Button size="sm" variant="primary" className="w-full" onClick={() => onGoto(sel.deviceId!)}>
+              פתיחת {siteDevices.find((x) => x.id === sel.deviceId)!.label} <ChevronLeft size={14} />
+            </Button>
+          )}
           {!ro && !sel.deviceId && rackItemDef(sel.kind).deviceType && (
             <Button size="sm" onClick={() => createOnMap(sel)}>
               <Plus size={14} /> צור גם כציוד במפה
