@@ -88,6 +88,18 @@ export function specPatch(d: Device, key: keyof ProductParams, value: unknown): 
   return patch;
 }
 
+/**
+ * The angles a camera's lens can show, from its model's parameters: a zoom or varifocal lens from
+ * its narrowest to its widest, a fixed lens just its own. Null without a model (any angle).
+ */
+export function fovLimits(d: Device): { min: number; max: number } | null {
+  const wide = d.spec?.fovDeg;
+  if (!d.product || !wide) return null;
+  const tele = d.spec?.fovTeleDeg;
+  const max = Math.round(wide);
+  return { min: tele && tele < wide ? Math.round(tele) : max, max };
+}
+
 // ---------- one brand across the system ----------
 
 const BRAND_ALIASES: [RegExp, string][] = [

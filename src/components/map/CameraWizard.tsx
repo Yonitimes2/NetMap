@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Check, Crosshair, Lightbulb, Package, X } from "lucide-react";
+import { AlertTriangle, Check, Crosshair, Info, Lightbulb, Package, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useApp } from "@/lib/store";
 import { DEFAULT_PPM } from "@/lib/space-catalog";
@@ -25,6 +25,7 @@ import type { Device } from "@/lib/types";
 import { Button, Input, cx } from "../ui";
 import { BoxIcons } from "../catalog/ProductIcons";
 import { ProductPicker } from "../catalog/ProductPicker";
+import { ProductModal } from "../catalog/ProductDetails";
 import { useEditor } from "./editor-store";
 import { PanelHeader } from "./panel-ui";
 
@@ -52,6 +53,8 @@ export function CameraWizard({ d, siteDevices, onChange }: { d: Device; siteDevi
   const [night, setNight] = useState<Night>("bw");
   const [over, setOver] = useState<Partial<Pick<PlaceFacts, FactKey>>>({});
   const [picking, setPicking] = useState(false);
+  /** the suggestion shown in full */
+  const [viewing, setViewing] = useState<Suggestion | null>(null);
 
   useEffect(() => {
     void load();
@@ -275,7 +278,7 @@ export function CameraWizard({ d, siteDevices, onChange }: { d: Device; siteDevi
                 </p>
                 <div className="space-y-2">
                   {result.list.map((sg) => (
-                    <SuggestionCard key={sg.p.id} sg={sg} onChoose={() => choose(sg.p, sg.fov)} />
+                    <SuggestionCard key={sg.p.id} sg={sg} onChoose={() => choose(sg.p, sg.fov)} onDetails={() => setViewing(sg)} />
                   ))}
                 </div>
                 <button onClick={() => setPicking(true)} className="w-full py-2 text-center text-sm font-medium text-blue-700">
@@ -320,6 +323,40 @@ export function CameraWizard({ d, siteDevices, onChange }: { d: Device; siteDevi
         )}
       </div>
 
+      {viewing && (
+        <ProductModal
+          id={viewing.p.id}
+          title={viewing.p.model}
+          extra={
+            <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+              <h2 className="mb-2 flex items-center gap-2 font-semibold">
+                למה הוא מוצע כאן
+                <span className={cx("rounded-full px-2 py-0.5 text-[11px] font-medium", LEVEL[viewing.level].className)}>{LEVEL[viewing.level].label}</span>
+              </h2>
+              <Reasons sg={viewing} />
+            </section>
+          }
+          onClose={() => setViewing(null)}
+          footer={
+            <>
+              <Button
+                variant="primary"
+                onClick={() => {
+                  const sg = viewing;
+                  setViewing(null);
+                  choose(sg.p, sg.fov);
+                }}
+              >
+                בחירת הדגם
+              </Button>
+              <Button variant="ghost" onClick={() => setViewing(null)}>
+                חזרה להצעות
+              </Button>
+            </>
+          }
+        />
+      )}
+
       {picking && (
         <ProductPicker
           deviceType={d.type}
@@ -342,12 +379,12 @@ const LEVEL: Record<Suggestion["level"], { label: string; className: string }> =
   weak: { label: "מתאימה חלקית", className: "bg-amber-50 text-amber-800" },
 };
 
-function SuggestionCard({ sg, onChoose }: { sg: Suggestion; onChoose: () => void }) {
+function SuggestionCard({ sg, onChoose, onDetails }: { sg: Suggestion; onChoose: () => void; onDetails: () => void }) {
   const { p } = sg;
   const level = LEVEL[sg.level];
   return (
     <div className={cx("rounded-xl p-3 ring-1", sg.level === "good" ? "ring-green-200" : "ring-slate-200")}>
-      <div className="flex gap-3">
+      <button onClick={onDetails} className="flex w-full gap-3 text-start" aria-label={`פרטים מלאים על ${p.model}`}>
         <span className="grid size-16 shrink-0 place-items-center overflow-hidden rounded-lg bg-slate-50">
           {p.imageId ? (
             // eslint-disable-next-line @next/next/no-img-element -- served by our API with the session cookie
@@ -364,13 +401,32 @@ function SuggestionCard({ sg, onChoose }: { sg: Suggestion; onChoose: () => void
           <div className="line-clamp-1 text-xs text-slate-500">{p.name}</div>
           <span className={cx("mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium", level.className)}>{level.label}</span>
         </div>
-      </div>
+      </button>
       {p.boxIcons.length > 0 && (
         <div className="mt-2">
           <BoxIcons icons={p.boxIcons} />
         </div>
       )}
-      <ul className="mt-2 space-y-1 text-xs">
+      <div className="mt-2">
+        <Reasons sg={sg} />
+      </div>
+      <div className="mt-2 flex gap-2">
+        <Button size="sm" variant={sg.level === "weak" ? "secondary" : "primary"} className="flex-1" onClick={onChoose}>
+          בחירת הדגם
+        </Button>
+        <Button size="sm" onClick={onDetails}>
+          <Info size={14} /> פרטים מלאים
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/** Why a camera fits the spot: what it misses, what to watch, what it does, and how to set its lens. */
+function Reasons({ sg }: { sg: Suggestion }) {
+  return (
+    <>
+      <ul className="space-y-1 text-xs">
         {sg.misses.map((t) => (
           <Line key={t} icon={<X size={13} />} className="text-red-700">
             {t}
@@ -388,10 +444,7 @@ function SuggestionCard({ sg, onChoose }: { sg: Suggestion; onChoose: () => void
         ))}
       </ul>
       {sg.setFov && <p className="mt-2 rounded-lg bg-blue-50 px-2.5 py-1.5 text-xs text-blue-800">עדשה משתנה: לכוון אותה ל-{sg.setFov}° בהתקנה.</p>}
-      <Button size="sm" variant={sg.level === "weak" ? "secondary" : "primary"} className="mt-2 w-full" onClick={onChoose}>
-        בחירת הדגם
-      </Button>
-    </div>
+    </>
   );
 }
 

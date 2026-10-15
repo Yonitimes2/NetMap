@@ -84,11 +84,14 @@ export function Modal({
   onClose,
   children,
   footer,
+  wide,
 }: {
   title: string;
   onClose: () => void;
   children: ReactNode;
   footer?: ReactNode;
+  /** room for a whole product page */
+  wide?: boolean;
 }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -100,7 +103,7 @@ export function Modal({
     // phones: a sheet from the bottom; the header and the buttons stay put while the content scrolls
     <div className="fixed inset-0 z-50 flex items-end justify-center bg-slate-900/40 p-0 sm:items-center sm:p-4" onPointerDown={onClose}>
       <div
-        className="flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:max-w-md sm:rounded-2xl"
+        className={cx("flex max-h-[90dvh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-xl sm:rounded-2xl", wide ? "sm:max-w-2xl" : "sm:max-w-md")}
         onPointerDown={(e) => e.stopPropagation()}
       >
         <div className="mx-auto mt-2 h-1.5 w-10 shrink-0 rounded-full bg-slate-300 sm:hidden" />

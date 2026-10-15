@@ -9,6 +9,7 @@ import {
   Eye,
   EyeOff,
   Plus,
+  ScanBarcode,
   Server,
   Trash2,
 } from "lucide-react";
@@ -36,8 +37,11 @@ import { useEditor } from "./editor-store";
 import { PanelHeader, Section } from "./panel-ui";
 import { RackSection } from "./RackSection";
 import { DeviceProductSection } from "./DeviceProduct";
+import { fovLimits } from "@/lib/products/client";
 import { CameraWizard } from "./CameraWizard";
 import { askConfirm } from "../dialogs";
+import { CodeScanner } from "../CodeScanner";
+import { useCoarsePointer } from "@/lib/use-media";
 import { ObstaclePanel, OpeningPanel, RoomPanel, WallPanel } from "./StructurePanels";
 
 interface PanelProps {
@@ -76,6 +80,9 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
   const deleteDevice = useApp((s) => s.deleteDevice);
   const select = useEditor((s) => s.select);
   const aiming = useEditor((s) => s.aim === id);
+  // phones and tablets: the serial number can be scanned from the label
+  const touch = useCoarsePointer();
+  const [scanning, setScanning] = useState(false);
 
   const siteDevices = useMemo(() => allDevices.filter((x) => x.siteId === d?.siteId), [allDevices, d?.siteId]);
   const siteLinks = useMemo(() => allLinks.filter((x) => x.siteId === d?.siteId), [allLinks, d?.siteId]);
@@ -181,7 +188,20 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
             <Input value={d.model ?? ""} readOnly={ro} onChange={(e) => upd({ model: e.target.value })} className="ltr text-end" />
           </Field>
           <Field label="מספר סידורי">
-            <Input value={d.serial ?? ""} readOnly={ro} onChange={(e) => upd({ serial: e.target.value })} className="ltr text-end" />
+            <div className="flex gap-1.5">
+              <Input value={d.serial ?? ""} readOnly={ro} onChange={(e) => upd({ serial: e.target.value })} className="ltr min-w-0 text-end" />
+              {touch && !ro && (
+                <button
+                  type="button"
+                  onClick={() => setScanning(true)}
+                  className="grid size-10 shrink-0 place-items-center rounded-lg bg-slate-900 text-white sm:size-9"
+                  aria-label="סריקת מספר סידורי במצלמה"
+                  title="סריקה במצלמה"
+                >
+                  <ScanBarcode size={18} />
+                </button>
+              )}
+            </div>
           </Field>
           <Field label="תאריך התקנה">
             <Input type="date" value={d.installDate ?? ""} readOnly={ro} onChange={(e) => upd({ installDate: e.target.value })} />
@@ -282,9 +302,7 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
           <Field label={`כיוון: ${d.camera.dir}°`}>
             <input type="range" min={0} max={359} value={d.camera.dir} disabled={ro} onChange={(e) => upd({ camera: { ...d.camera!, dir: +e.target.value } })} className="w-full accent-red-600" />
           </Field>
-          <Field label={`רוחב שדה ראייה: ${d.camera.fov}°`}>
-            <input type="range" min={10} max={360} value={d.camera.fov} disabled={ro} onChange={(e) => upd({ camera: { ...d.camera!, fov: +e.target.value } })} className="w-full accent-red-600" />
-          </Field>
+          <FovField d={d} ro={ro} onChange={(fov) => upd({ camera: { ...d.camera!, fov } })} />
           <Field label="טווח (מטר)">
             <Input type="number" value={d.camera.range} readOnly={ro} onChange={(e) => upd({ camera: { ...d.camera!, range: +e.target.value || 1 } })} />
           </Field>
@@ -328,6 +346,19 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
 
       <PhotosSection d={d} ro={ro} />
 
+      {scanning && (
+        <CodeScanner
+          model={d.product?.model ?? d.model}
+          onClose={() => setScanning(false)}
+          onSerial={(serial) => {
+            upd({ serial });
+            setScanning(false);
+            toast(`נשמר מספר סידורי: ${serial}`);
+          }}
+          onMac={def.network ? (mac) => upd({ net: { ...d.net, mac } }) : undefined}
+        />
+      )}
+
       <Section title="הערות" open={!!d.notes}>
         <Textarea rows={3} value={d.notes ?? ""} readOnly={ro} onChange={(e) => upd({ notes: e.target.value })} placeholder="מיקום מדויק, היסטוריה, תקלות…" />
       </Section>
@@ -350,6 +381,40 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
         )}
       </div>
     </div>
+  );
+}
+
+/** The camera's field of view: within what its model's lens can show, or any angle without a model. */
+function FovField({ d, ro, onChange }: { d: Device; ro: boolean; onChange: (fov: number) => void }) {
+  const lens = fovLimits(d);
+  const fov = d.camera!.fov;
+  if (!lens) {
+    return (
+      <Field label={`רוחב שדה ראייה: ${fov}°`}>
+        <input type="range" min={10} max={360} value={fov} disabled={ro} onChange={(e) => onChange(+e.target.value)} className="w-full accent-red-600" />
+      </Field>
+    );
+  }
+  const shown = Math.min(lens.max, Math.max(lens.min, fov));
+  if (lens.min === lens.max) {
+    return (
+      <div>
+        <span className="mb-1 block text-xs font-medium text-slate-500">רוחב שדה ראייה: {lens.max}°</span>
+        <p className="text-xs text-slate-500">
+          עדשה קבועה: הזווית נקבעת לפי הדגם.
+          {fov !== lens.max && !ro && (
+            <button onClick={() => onChange(lens.max)} className="ms-1 font-medium text-blue-700">
+              עדכון האלומה במפה ל-{lens.max}°
+            </button>
+          )}
+        </p>
+      </div>
+    );
+  }
+  return (
+    <Field label={`רוחב שדה ראייה: ${shown}° (העדשה: ${lens.min}°–${lens.max}°)`}>
+      <input type="range" min={lens.min} max={lens.max} value={shown} disabled={ro} onChange={(e) => onChange(+e.target.value)} className="w-full accent-red-600" />
+    </Field>
   );
 }
 

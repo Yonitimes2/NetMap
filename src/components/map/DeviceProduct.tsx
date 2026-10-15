@@ -1,11 +1,11 @@
 "use client";
 
-import Link from "next/link";
-import { AlertTriangle, Crosshair, ExternalLink, Package, Pencil, Replace, RotateCcw, X } from "lucide-react";
+import { AlertTriangle, Crosshair, Info, Package, Pencil, Replace, RotateCcw, X } from "lucide-react";
 import { useState } from "react";
 import { Badge, Button } from "../ui";
 import { useEditor } from "./editor-store";
 import { ProductPicker } from "../catalog/ProductPicker";
+import { ProductModal } from "../catalog/ProductDetails";
 import { ParamEditor } from "../catalog/ParamEditor";
 import { BoxIcons, GeneralBadges, TechTiles, generalBadges, techTiles } from "../catalog/ProductIcons";
 import { brandWarning, categoriesFor, productPatch, specPatch } from "@/lib/products/client";
@@ -24,6 +24,7 @@ export function DeviceProductSection({ d, siteDevices, ro, onChange }: { d: Devi
   const [picking, setPicking] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [all, setAll] = useState(false);
+  const [details, setDetails] = useState(false);
   const setAim = useEditor((s) => s.setAim);
   const cats = categoriesFor(d.type);
   if (!cats && !d.product) return null;
@@ -176,9 +177,9 @@ export function DeviceProductSection({ d, siteDevices, ro, onChange }: { d: Devi
             <Crosshair size={14} /> הצעה לפי המיקום
           </Button>
         )}
-        <Link href={`/admin/catalog/${p.id}`} className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-sm text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50 sm:h-8">
-          <ExternalLink size={14} /> כל פרטי המוצר
-        </Link>
+        <Button size="sm" onClick={() => setDetails(true)}>
+          <Info size={14} /> כל פרטי המוצר
+        </Button>
         {!ro && (
           <Button size="sm" variant="ghost" onClick={() => onChange({ product: undefined, spec: undefined })}>
             <X size={14} /> בלי דגם
@@ -186,6 +187,17 @@ export function DeviceProductSection({ d, siteDevices, ro, onChange }: { d: Devi
         )}
       </div>
       {picker}
+      {details && (
+        <ProductModal
+          id={p.id}
+          onClose={() => setDetails(false)}
+          footer={
+            <Button variant="ghost" onClick={() => setDetails(false)}>
+              סגירה
+            </Button>
+          }
+        />
+      )}
     </div>
   );
 }

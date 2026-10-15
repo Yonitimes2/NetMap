@@ -1,16 +1,14 @@
 "use client";
 
-import { ExternalLink, FileText, Pencil, RotateCcw } from "lucide-react";
 import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { AppShell } from "../AppShell";
-import { Badge, Field, Select, cx } from "../ui";
+import { Field, Select } from "../ui";
 import { authApi, useSession } from "@/lib/session-client";
 import { toast } from "@/lib/toast";
 import { DEVICE_TYPES } from "@/lib/catalog";
-import { BoxIcons, GeneralBadges, TechTiles, generalBadges, techTiles } from "./ProductIcons";
-import { ParamEditor } from "./ParamEditor";
-import { CATEGORY_LABEL, PARAM_FIELDS, formatParam, type CatalogCategory, type ProductFull } from "@/lib/products/types";
+import { ProductDetails } from "./ProductDetails";
+import { CATEGORY_LABEL, type ProductFull } from "@/lib/products/types";
 
 /** One catalog product: images, planning parameters (with corrections) and the full spec table. */
 export function ProductScreen() {
@@ -48,87 +46,10 @@ export function ProductScreen() {
         ) : !product ? (
           <p className="p-10 text-center text-slate-400">טוען…</p>
         ) : (
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-            <div className="space-y-4">
-              <Gallery ids={product.imageIds} />
-              <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-                <div className="ltr text-end text-xs text-slate-400">{product.brandName}</div>
-                <h1 className="ltr text-end text-xl font-bold">{product.model}</h1>
-                <p className="mt-1 text-sm font-medium text-slate-700">{product.name}</p>
-                {product.description && <p className="mt-2 text-sm leading-relaxed text-slate-600">{product.description}</p>}
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {product.pageUrl && (
-                    <a href={product.pageUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm ring-1 ring-slate-200 hover:bg-slate-50">
-                      <ExternalLink size={15} /> דף המוצר באתר
-                    </a>
-                  )}
-                  {product.datasheetUrl && (
-                    <a href={product.datasheetUrl} target="_blank" rel="noreferrer" className="inline-flex h-9 items-center gap-1.5 rounded-lg px-3 text-sm ring-1 ring-slate-200 hover:bg-slate-50">
-                      <FileText size={15} /> דף נתונים (PDF)
-                    </a>
-                  )}
-                </div>
-                {product.msrp && <p className="mt-2 text-xs text-slate-500">מחיר מומלץ לצרכן באתר: ₪{product.msrp.toLocaleString("he-IL")}</p>}
-                {product.fetchedAt && <p className="mt-1 text-xs text-slate-400">נקרא מהאתר: {new Date(product.fetchedAt).toLocaleString("he-IL")}</p>}
-              </section>
-              {isAdmin && <Placement product={product} onSave={save} />}
-            </div>
-
-            <div className="space-y-4">
-              <Highlights product={product} />
-              <Params product={product} editable={isAdmin} onSave={save} />
-              {product.overview.length > 0 && (
-                <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-                  <h2 className="mb-2 font-semibold">עיקרי המוצר</h2>
-                  <ul className="ltr list-inside list-disc space-y-0.5 text-start text-sm text-slate-700">
-                    {product.overview.map((o) => (
-                      <li key={o}>{o}</li>
-                    ))}
-                  </ul>
-                </section>
-              )}
-              <Specs product={product} />
-            </div>
-          </div>
+          <ProductDetails product={product} isAdmin={isAdmin} onSave={isAdmin ? save : undefined} side={isAdmin && <Placement product={product} onSave={save} />} />
         )}
       </div>
     </AppShell>
-  );
-}
-
-/** What the product includes: the manufacturer's box icons, technical tiles and other features. */
-function Highlights({ product }: { product: ProductFull }) {
-  const tiles = techTiles(product.category, product.params);
-  const badges = generalBadges(product.category, product.params, product.boxIcons);
-  if (!product.boxIcons.length && !tiles.length && !badges.length) return null;
-  return (
-    <section className="space-y-3 rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-      <h2 className="font-semibold">מה כולל המוצר</h2>
-      <BoxIcons icons={product.boxIcons} size="lg" />
-      <TechTiles tiles={tiles} />
-      <GeneralBadges badges={badges} />
-    </section>
-  );
-}
-
-function Gallery({ ids }: { ids: string[] }) {
-  const [current, setCurrent] = useState(0);
-  if (!ids.length) return <div className="grid aspect-square place-items-center rounded-2xl bg-white text-sm text-slate-400 ring-1 ring-slate-200">אין תמונה</div>;
-  return (
-    <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200">
-      {/* eslint-disable-next-line @next/next/no-img-element -- served by our API with the session cookie */}
-      <img src={`/api/catalog/images/${ids[Math.min(current, ids.length - 1)]}?w=800`} alt="" className="mx-auto aspect-square max-h-72 w-full object-contain lg:max-h-none" />
-      {ids.length > 1 && (
-        <div className="mt-2 flex gap-2 overflow-x-auto">
-          {ids.map((id, i) => (
-            <button key={id} onClick={() => setCurrent(i)} className={cx("size-14 shrink-0 overflow-hidden rounded-lg ring-2", i === current ? "ring-blue-500" : "ring-transparent")}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={`/api/catalog/images/${id}?w=160`} alt="" loading="lazy" className="size-full object-contain" />
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -162,81 +83,6 @@ function Placement({ product, onSave }: { product: ProductFull; onSave: (p: Reco
           <option value="discontinued">לא באתר / הופסק</option>
         </Select>
       </Field>
-    </section>
-  );
-}
-
-function Params({ product, editable, onSave }: { product: ProductFull; editable: boolean; onSave: (p: Record<string, unknown>) => void }) {
-  const fields = PARAM_FIELDS[product.category as CatalogCategory] ?? [];
-  const [editing, setEditing] = useState<string | null>(null);
-  if (!fields.length) return null;
-  return (
-    <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-      <h2 className="font-semibold">פרמטרים לתכנון</h2>
-      <p className="mb-2 text-xs text-slate-500">נקראו מהאתר. אפשר לתקן כל ערך; עדכון מהאתר לא ידרוס תיקון.</p>
-      <div className="divide-y divide-slate-100">
-        {fields.map((f) => {
-          const overridden = f.key in product.overrides;
-          const value = product.params[f.key];
-          return (
-            <div key={f.key} className="py-2">
-              <div className="flex items-center gap-2">
-                <span className="w-36 shrink-0 text-sm text-slate-500">{f.label}</span>
-                <span className={cx("min-w-0 flex-1 text-sm", value === undefined ? "text-slate-300" : "font-medium")}>{formatParam(f, value)}</span>
-                {overridden && <Badge color="amber">תוקן</Badge>}
-                {editable && (
-                  <>
-                    <button onClick={() => setEditing(editing === f.key ? null : f.key)} className="rounded p-1.5 text-slate-400 hover:bg-slate-100" aria-label={`עריכת ${f.label}`}>
-                      <Pencil size={14} />
-                    </button>
-                    {overridden && (
-                      <button onClick={() => onSave({ overrides: { [f.key]: null } })} className="rounded p-1.5 text-slate-400 hover:bg-slate-100" title="חזרה לערך מהאתר" aria-label="חזרה לערך מהאתר">
-                        <RotateCcw size={14} />
-                      </button>
-                    )}
-                  </>
-                )}
-              </div>
-              {overridden && <div className="ms-38 text-xs text-slate-400">מהאתר: {formatParam(f, product.sourceParams[f.key])}</div>}
-              {editing === f.key && (
-                <ParamEditor
-                  field={f}
-                  value={value}
-                  onCancel={() => setEditing(null)}
-                  onSave={(v) => {
-                    setEditing(null);
-                    onSave({ overrides: { [f.key]: v } });
-                  }}
-                />
-              )}
-            </div>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
-function Specs({ product }: { product: ProductFull }) {
-  if (!product.specs.length) return null;
-  return (
-    <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
-      <h2 className="mb-2 font-semibold">מפרט מלא</h2>
-      <div className="space-y-2">
-        {product.specs.map((g) => (
-          <details key={g.group} className="group rounded-xl bg-slate-50 px-3 py-2" open={/video|lens|housing|poe|interface|storage/i.test(g.group)}>
-            <summary className="ltr cursor-pointer text-end text-sm font-semibold">{g.group}</summary>
-            <dl className="ltr mt-1 divide-y divide-slate-200/70 text-start text-xs">
-              {g.items.map((i) => (
-                <div key={i.k} className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-2 py-1">
-                  <dt className="text-slate-500">{i.k}</dt>
-                  <dd className="whitespace-pre-line text-slate-800">{i.v}</dd>
-                </div>
-              ))}
-            </dl>
-          </details>
-        ))}
-      </div>
     </section>
   );
 }
