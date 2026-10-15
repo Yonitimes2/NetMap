@@ -26,7 +26,18 @@ export function CostTag({ p, className }: { p: Pick<ProductSummary, "cost" | "co
 /** Prices in a product's full details: the cost, the maker's retail price, a customer price and the margin. */
 export function PricesSection({ product }: { product: ProductFull }) {
   const { cost, msrp, costNote } = product;
-  if (cost === undefined && msrp === undefined && !costNote) return null;
+  if (cost === undefined && msrp === undefined && !costNote) {
+    return (
+      <section className="rounded-2xl bg-white p-4 ring-1 ring-slate-200">
+        <h2 className="mb-1 font-semibold">
+          מחירים <span className="text-xs font-normal text-slate-400">· רק לבעל החשבון</span>
+        </h2>
+        <p className="text-sm text-slate-500">
+          אין מחיר למוצר הזה: אין לו עלות ממחירון, ובאתר היצרן אין לו מחיר. מחירון מייבאים במאגר המוצרים.
+        </p>
+      </section>
+    );
+  }
   const markup = product.markupPct ?? DEFAULT_MARKUP;
   const offer = customerPrice(product, markup);
   const margin = offer && cost !== undefined ? offer.net - cost : undefined;
