@@ -139,7 +139,8 @@ export function parseProductPage(html: string, pageUrl: string): RawProduct {
     ).values(),
   ];
   const pid = html.match(/\?pid=(\d+)&(?:amp;)?ptype=pdf/)?.[1];
-  const price = html.match(/₪\s*([\d,]+(?:\.\d+)?)/)?.[1];
+  // the retail price, where the site shows one: "<span class="price-currency">₪</span>9935"
+  const price = html.match(/₪\s*(?:<\/[a-z]+>\s*)?([\d,]+(?:\.\d+)?)/)?.[1];
 
   return {
     model: model.toUpperCase(),

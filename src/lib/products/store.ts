@@ -4,6 +4,7 @@ import path from "node:path";
 import { db, type Row } from "../db";
 import { dataDir } from "../server-keys";
 import { effectiveParams, type BoxIcon, type CatalogCategory, type ProductFull, type ProductParams, type ProductSummary, type SpecGroup } from "./types";
+import { DEFAULT_MARKUP, matchPriceRows, type PriceRow } from "./pricing";
 
 /** Catalog storage (MySQL tables catalog_products / catalog_images, image files under the data dir). */
 
@@ -32,6 +33,11 @@ type ProductRow = Row & {
   page_url: string | null;
   datasheet_url: string | null;
   msrp: string | null;
+  cost: string | null;
+  cost_note: string | null;
+  cost_source: string | null;
+  cost_at: Date | null;
+  markup_pct: string | null;
   status: ProductFull["status"];
   source_hash: string | null;
   fetched_at: Date | null;
@@ -50,6 +56,9 @@ const summary = (r: ProductRow): ProductSummary => ({
   imageId: r.images[0],
   boxIcons: r.box_icons ?? [],
   status: r.status,
+  cost: r.cost === null ? undefined : Number(r.cost),
+  costNote: r.cost_note ?? undefined,
+  msrp: r.msrp === null ? undefined : Number(r.msrp),
 });
 
 const full = (r: ProductRow): ProductFull => ({
@@ -63,12 +72,14 @@ const full = (r: ProductRow): ProductFull => ({
   features: r.features,
   pageUrl: r.page_url ?? undefined,
   datasheetUrl: r.datasheet_url ?? undefined,
-  msrp: r.msrp === null ? undefined : Number(r.msrp),
+  costSource: r.cost_source ?? undefined,
+  costAt: r.cost_at?.getTime(),
+  markupPct: r.markup_pct === null ? DEFAULT_MARKUP : Number(r.markup_pct),
   fetchedAt: r.fetched_at?.getTime(),
   updatedAt: r.updated_at.getTime(),
 });
 
-const SELECT = "SELECT p.*, b.name AS brand_name FROM catalog_products p JOIN brands b ON b.id = p.brand_id";
+const SELECT = "SELECT p.*, b.name AS brand_name, b.markup_pct FROM catalog_products p JOIN brands b ON b.id = p.brand_id";
 
 export async function listProducts(filter: { brandId?: string; category?: string; q?: string; includeInactive?: boolean } = {}): Promise<ProductSummary[]> {
   const where: string[] = [];
@@ -333,6 +344,65 @@ export async function recentRuns(brandId: string, limit = 5) {
 }
 
 export async function listBrands() {
-  const [rows] = await (await db()).query<Row[]>("SELECT id, name, website, sources FROM brands ORDER BY name");
-  return rows.map((r) => ({ id: r.id as string, name: r.name as string, website: r.website as string | null, sources: r.sources as Record<string, boolean> }));
+  const [rows] = await (await db()).query<Row[]>("SELECT id, name, website, sources, markup_pct FROM brands ORDER BY name");
+  return rows.map((r) => ({
+    id: r.id as string,
+    name: r.name as string,
+    website: r.website as string | null,
+    sources: r.sources as Record<string, boolean>,
+    markupPct: r.markup_pct === null ? DEFAULT_MARKUP : Number(r.markup_pct),
+  }));
+}
+
+// ---------- prices ----------
+
+/** The price list the brand's costs are from now: its name, when it was read, how many products have a price. */
+export async function priceListInfo(brandId: string): Promise<{ source: string; at: number; priced: number } | null> {
+  const [rows] = await (await db()).query<Row[]>(
+    "SELECT cost_source, MAX(cost_at) AS at, COUNT(cost) AS priced FROM catalog_products WHERE brand_id = ? AND cost_source IS NOT NULL GROUP BY cost_source ORDER BY at DESC LIMIT 1",
+    [brandId],
+  );
+  const r = rows[0];
+  return r ? { source: r.cost_source as string, at: (r.at as Date).getTime(), priced: Number(r.priced) } : null;
+}
+
+/**
+ * A distributor's price list for a brand: each line matched to a catalog product. Saving replaces
+ * the brand's costs (a product the new list doesn't have loses its old cost). `dryRun` only reports.
+ */
+export async function applyPriceList(brandId: string, source: string, rows: PriceRow[], dryRun: boolean) {
+  const conn = await db();
+  const [products] = await conn.query<Row[]>("SELECT id, model, cost FROM catalog_products WHERE brand_id = ? AND status <> 'discontinued'", [brandId]);
+  const { matches, unmatched } = matchPriceRows(products as { id: string; model: string }[], rows);
+  const priced = new Set(matches.filter((m) => m.price !== undefined).map((m) => m.productId));
+  const stats = {
+    rows: rows.length,
+    products: products.length,
+    priced: priced.size,
+    noted: matches.length - priced.size,
+    withDisk: matches.filter((m) => m.note?.startsWith("כולל דיסק")).length,
+    removed: products.filter((p) => p.cost !== null && !priced.has(p.id as string)).length,
+    unmatched,
+  };
+  if (dryRun) return stats;
+  const c = await conn.getConnection();
+  try {
+    await c.beginTransaction();
+    const now = new Date();
+    await c.query("UPDATE catalog_products SET cost = NULL, cost_note = NULL, cost_source = NULL, cost_at = NULL WHERE brand_id = ?", [brandId]);
+    for (const m of matches) {
+      await c.query("UPDATE catalog_products SET cost = ?, cost_note = ?, cost_source = ?, cost_at = ? WHERE id = ?", [m.price ?? null, m.note ?? null, source, now, m.productId]);
+    }
+    await c.commit();
+  } catch (e) {
+    await c.rollback();
+    throw e;
+  } finally {
+    c.release();
+  }
+  return stats;
+}
+
+export async function setMarkup(brandId: string, pct: number) {
+  await (await db()).query("UPDATE brands SET markup_pct = ? WHERE id = ?", [pct, brandId]);
 }

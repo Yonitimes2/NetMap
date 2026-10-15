@@ -1,5 +1,5 @@
 import { jsonError, readJson, requireUser } from "@/lib/auth/current-user";
-import { countsByCategory, listBrands, recentRuns } from "@/lib/products/store";
+import { countsByCategory, listBrands, priceListInfo, recentRuns } from "@/lib/products/store";
 import { startWebSync, syncProgress } from "@/lib/products/sync";
 
 /** Brands, how many products each category has, recent updates and the one running now. */
@@ -8,7 +8,7 @@ export async function GET() {
   if ("error" in auth) return auth.error;
   const brands = await listBrands();
   const out = [];
-  for (const b of brands) out.push({ ...b, counts: await countsByCategory(b.id), runs: await recentRuns(b.id) });
+  for (const b of brands) out.push({ ...b, counts: await countsByCategory(b.id), runs: await recentRuns(b.id), priceList: await priceListInfo(b.id) });
   return Response.json({ brands: out, progress: syncProgress() });
 }
 

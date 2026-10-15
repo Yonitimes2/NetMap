@@ -6,6 +6,7 @@ import { Badge, Modal, cx } from "../ui";
 import { authApi, useSession } from "@/lib/session-client";
 import { BoxIcons, GeneralBadges, TechTiles, generalBadges, techTiles } from "./ProductIcons";
 import { ParamEditor } from "./ParamEditor";
+import { PricesSection } from "./Prices";
 import { PARAM_FIELDS, formatParam, type CatalogCategory, type ProductFull } from "@/lib/products/types";
 
 /**
@@ -49,10 +50,10 @@ export function ProductDetails({
             </a>
           )}
         </div>
-        {/* prices are for the account holder only */}
-        {isAdmin && product.msrp && <p className="mt-2 text-xs text-slate-500">מחיר מומלץ לצרכן באתר: ₪{product.msrp.toLocaleString("he-IL")}</p>}
         {product.fetchedAt && <p className="mt-1 text-xs text-slate-400">נקרא מהאתר: {new Date(product.fetchedAt).toLocaleString("he-IL")}</p>}
       </section>
+      {/* prices are the account holder's (the server doesn't send them to anyone else) */}
+      {isAdmin && <PricesSection product={product} />}
       {extra}
     </>
   );

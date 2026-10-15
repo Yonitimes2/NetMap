@@ -1,12 +1,15 @@
 import { jsonError, readJson, requireUser } from "@/lib/auth/current-user";
 import { getProduct, updateProduct } from "@/lib/products/store";
 import { CATEGORY_LABEL, type CatalogCategory } from "@/lib/products/types";
+import { withoutPrices } from "@/lib/products/pricing";
 
 export async function GET(_req: Request, ctx: RouteContext<"/api/catalog/products/[id]">) {
   const auth = await requireUser();
   if ("error" in auth) return auth.error;
   const product = await getProduct((await ctx.params).id);
-  return product ? Response.json({ product }) : jsonError(404, "not_found", "המוצר לא נמצא");
+  if (!product) return jsonError(404, "not_found", "המוצר לא נמצא");
+  // prices are the account holder's
+  return Response.json({ product: auth.user.role === "admin" ? product : withoutPrices(product) });
 }
 
 /** System admins correct a product: parameter values (null = back to the source), equipment type, category, status. */

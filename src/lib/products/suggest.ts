@@ -126,6 +126,8 @@ export interface Suggestion {
   missed: Miss[];
   /** lower is better */
   rank: number;
+  /** what it misses and needs noting, without the simplicity part of the rank: equal tiers compare by price */
+  tier: number;
 }
 
 export interface SuggestResult {
@@ -282,6 +284,7 @@ function evaluate(p: ProductSummary, n: CameraNeeds): Suggestion | null {
     fov: Math.round(fov),
     setFov: !ptz && covers && tele < wide && fov < wide - 1 ? Math.round(fov) : undefined,
     rank: misses.length * 100 + notes.length * 10 + cost,
+    tier: misses.length * 100 + notes.length * 10,
   };
 }
 
@@ -291,7 +294,8 @@ export function suggestCameras(products: ProductSummary[], n: CameraNeeds): Sugg
     .filter((p) => CAMERA_CATEGORIES.includes(p.category) && p.status !== "discontinued" && (p.category !== "solar" || n.noPower))
     .map((p) => evaluate(p, n))
     .filter((x): x is Suggestion => !!x)
-    .sort((a, b) => a.rank - b.rank);
+    // equally good cameras: the cheaper first, where both have a cost from the price list
+    .sort((a, b) => a.tier - b.tier || (a.p.cost !== undefined && b.p.cost !== undefined ? a.p.cost - b.p.cost : a.rank - b.rank));
   const fit = all.filter((x) => x.level !== "weak");
   const list = fit.length >= 3 ? fit.slice(0, 5) : [...fit, ...all.filter((x) => x.level === "weak").slice(0, 3 - fit.length)];
   // advice when no fixed camera does it (a PTZ that does shows one direction at a time)

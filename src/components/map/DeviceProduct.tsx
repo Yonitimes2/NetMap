@@ -1,14 +1,15 @@
 "use client";
 
 import { AlertTriangle, Crosshair, Info, Package, Pencil, Replace, RotateCcw, X } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Badge, Button } from "../ui";
 import { useEditor } from "./editor-store";
 import { ProductPicker } from "../catalog/ProductPicker";
 import { ProductModal } from "../catalog/ProductDetails";
+import { CostTag } from "../catalog/Prices";
 import { ParamEditor } from "../catalog/ParamEditor";
 import { BoxIcons, GeneralBadges, TechTiles, generalBadges, techTiles } from "../catalog/ProductIcons";
-import { brandWarning, categoriesFor, productPatch, specPatch } from "@/lib/products/client";
+import { brandWarning, categoriesFor, productPatch, specPatch, useCatalog } from "@/lib/products/client";
 import { PARAM_FIELDS, formatParam, type ProductParams } from "@/lib/products/types";
 import { toast } from "@/lib/toast";
 import type { Device } from "@/lib/types";
@@ -26,6 +27,12 @@ export function DeviceProductSection({ d, siteDevices, ro, onChange }: { d: Devi
   const [all, setAll] = useState(false);
   const [details, setDetails] = useState(false);
   const setAim = useEditor((s) => s.setAim);
+  // the model's current catalog entry, for its cost (the device itself never stores prices)
+  const loadCatalog = useCatalog((s) => s.load);
+  const listed = useCatalog((s) => (d.product ? s.products?.find((x) => x.id === d.product!.id) : undefined));
+  useEffect(() => {
+    if (d.product) void loadCatalog();
+  }, [d.product, loadCatalog]);
   const cats = categoriesFor(d.type);
   if (!cats && !d.product) return null;
 
@@ -103,6 +110,7 @@ export function DeviceProductSection({ d, siteDevices, ro, onChange }: { d: Devi
           <div className="text-[11px] text-slate-400">{p.brand}</div>
           <div className="ltr text-end font-semibold">{p.model}</div>
           <div className="line-clamp-2 text-xs text-slate-500">{p.name}</div>
+          {listed && <CostTag p={listed} />}
         </div>
       </div>
 

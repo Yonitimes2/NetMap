@@ -1,15 +1,18 @@
 "use client";
 
 import Link from "next/link";
-import { Package, RefreshCw, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { FileSpreadsheet, Package, RefreshCw, Search } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AppShell } from "../AppShell";
 import { askConfirm } from "../dialogs";
-import { Badge, Button, Empty, Input, cx } from "../ui";
+import { Badge, Button, Empty, Field, Input, Modal, cx } from "../ui";
 import { BoxIcons, GeneralBadges, generalBadges } from "./ProductIcons";
+import { CostTag } from "./Prices";
 import { authApi, useSession } from "@/lib/session-client";
 import { toast } from "@/lib/toast";
 import { CAMERA_CATEGORIES, CATEGORY_LABEL, FORM_LABEL, paramChips, type CatalogCategory, type FormFactor, type ProductSummary } from "@/lib/products/types";
+import { readPriceList } from "@/lib/products/price-list";
+import { priceListName, type PriceRow } from "@/lib/products/pricing";
 
 interface BrandInfo {
   id: string;
@@ -17,6 +20,20 @@ interface BrandInfo {
   website: string | null;
   counts: Record<string, number>;
   runs: { id: number; source: string; startedAt: number; finishedAt?: number; status: string; stats: Record<string, number> }[];
+  /** markup on cost for a customer price, where the maker's site has no retail price */
+  markupPct: number;
+  /** the price list the costs are from now */
+  priceList: { source: string; at: number; priced: number } | null;
+}
+
+interface PriceStats {
+  rows: number;
+  products: number;
+  priced: number;
+  noted: number;
+  withDisk: number;
+  removed: number;
+  unmatched: string[];
 }
 
 interface Progress {
@@ -55,6 +72,8 @@ function Catalog() {
   const [q, setQ] = useState("");
   const [mp, setMp] = useState<number | null>(null);
   const [form, setForm] = useState<FormFactor | null>(null);
+  /** bumped after prices change, to load brands and products again */
+  const [reload, setReload] = useState(0);
   const running = progress?.phase === "listing" || progress?.phase === "products";
 
   // brand status, polled while an update runs
@@ -74,7 +93,7 @@ function Catalog() {
       alive = false;
       clearInterval(t);
     };
-  }, [running]);
+  }, [running, reload]);
 
   // the products; reloaded when an update finishes
   useEffect(() => {
@@ -85,7 +104,7 @@ function Catalog() {
     return () => {
       alive = false;
     };
-  }, [progress?.phase]);
+  }, [progress?.phase, reload]);
 
   const sync = async (brandId: string) => {
     const ok = await askConfirm({
@@ -172,6 +191,7 @@ function Catalog() {
               </p>
             )}
             {mine?.phase === "error" && <p className="mt-2 text-xs text-red-700">העדכון נכשל: {mine.error}</p>}
+            <PriceList brand={b} onChanged={() => setReload((n) => n + 1)} />
           </div>
         );
       })}
@@ -223,6 +243,129 @@ function Catalog() {
   );
 }
 
+/** The brand's price list (the distributor's Excel file) and its markup for a customer price. */
+function PriceList({ brand, onChanged }: { brand: BrandInfo; onChanged: () => void }) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [preview, setPreview] = useState<{ source: string; rows: PriceRow[]; stats: PriceStats } | null>(null);
+  const [markup, setMarkup] = useState(String(brand.markupPct));
+
+  const read = async (file: File) => {
+    setBusy(true);
+    try {
+      const rows = await readPriceList(file);
+      if (!rows.length) throw new Error("לא נמצאו בקובץ גיליונות עם עמודות ״דגם״ ו״מחיר״.");
+      const source = file.name.replace(/\.[^.]+$/, "").trim();
+      const r = await authApi<{ stats: PriceStats }>("/api/admin/catalog/prices", "POST", { brandId: brand.id, source, rows, dryRun: true });
+      setPreview({ source, rows, stats: r.stats });
+    } catch (e) {
+      toast((e as Error).message || "לא הצלחנו לקרוא את הקובץ", "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const save = async () => {
+    if (!preview) return;
+    setBusy(true);
+    try {
+      const r = await authApi<{ stats: PriceStats }>("/api/admin/catalog/prices", "POST", { brandId: brand.id, source: preview.source, rows: preview.rows });
+      toast(`נשמרו מחירים ל-${r.stats.priced} מוצרים`);
+      setPreview(null);
+      onChanged();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveMarkup = async () => {
+    const n = Number(markup.replace(",", "."));
+    if (!(n >= 0 && n <= 1000)) return setMarkup(String(brand.markupPct));
+    if (n === brand.markupPct) return;
+    try {
+      await authApi("/api/admin/catalog/prices", "PATCH", { brandId: brand.id, markupPct: n });
+      toast("נשמר");
+      onChanged();
+    } catch (e) {
+      toast((e as Error).message, "error");
+    }
+  };
+
+  const st = preview?.stats;
+  return (
+    <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-3">
+      <div className="min-w-0 flex-1 text-xs text-slate-500">
+        {brand.priceList ? (
+          <>
+            <b className="text-slate-700">{priceListName(brand.priceList.source)}</b> · {new Date(brand.priceList.at).toLocaleDateString("he-IL")} · {brand.priceList.priced} מוצרים עם
+            מחיר
+          </>
+        ) : (
+          "עדיין לא נטען מחירון."
+        )}
+      </div>
+      <label className="flex items-center gap-1.5 text-xs text-slate-600">
+        מחיר ללקוח כשאין מחיר באתר: עלות +
+        <span className="w-16">
+          <Input value={markup} onChange={(e) => setMarkup(e.target.value)} onBlur={saveMarkup} inputMode="decimal" className="ltr text-center" />
+        </span>
+        %
+      </label>
+      <Button onClick={() => fileRef.current?.click()} disabled={busy}>
+        <FileSpreadsheet size={16} /> {busy && !preview ? "קורא את הקובץ…" : "ייבוא מחירון"}
+      </Button>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".xls,.xlsx"
+        hidden
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          e.target.value = "";
+          if (f) void read(f);
+        }}
+      />
+      {preview && st && (
+        <Modal
+          title={`ייבוא מחירון · ${brand.name}`}
+          onClose={() => setPreview(null)}
+          footer={
+            <>
+              <Button variant="primary" onClick={save} disabled={busy || !st.priced}>
+                {busy ? "שומר…" : "שמירת המחירים"}
+              </Button>
+              <Button variant="ghost" onClick={() => setPreview(null)}>
+                ביטול
+              </Button>
+            </>
+          }
+        >
+          <Field label="שם המחירון">
+            <Input value={preview.source} onChange={(e) => setPreview({ ...preview, source: e.target.value })} />
+          </Field>
+          <ul className="space-y-1.5 text-sm">
+            <li>{st.rows} שורות נקראו מהקובץ.</li>
+            <li>
+              <b>{st.priced}</b> מוצרים מתוך {st.products} במאגר יקבלו מחיר{st.withDisk ? ` (${st.withDisk} מהם רק בגרסה עם דיסק)` : ""}.
+            </li>
+            {st.noted > 0 && <li>{st.noted} מוצרים מופיעים בלי מחיר (למשל ״שאל את סוכן המכירות״).</li>}
+            {st.removed > 0 && <li className="text-amber-700">ל-{st.removed} מוצרים היה מחיר מהמחירון הקודם, והם לא נמצאו בחדש: המחיר שלהם יימחק.</li>}
+            <li className="text-xs text-slate-500">המחירים במחירון לפני מע״מ. הם נראים רק לבעל החשבון.</li>
+          </ul>
+          {st.unmatched.length > 0 && (
+            <details className="rounded-xl bg-slate-50 px-3 py-2 text-sm">
+              <summary className="cursor-pointer">{st.unmatched.length} שורות במחירון שאין להן מוצר במאגר</summary>
+              <p className="ltr mt-1 text-start text-xs text-slate-500">{st.unmatched.join(" · ")}</p>
+            </details>
+          )}
+        </Modal>
+      )}
+    </div>
+  );
+}
+
 function ProductCard({ p }: { p: ProductSummary }) {
   return (
     <Link href={`/admin/catalog/${p.id}`} className="flex gap-3 rounded-2xl bg-white p-3 ring-1 ring-slate-200 transition hover:shadow-md active:bg-slate-50">
@@ -240,6 +383,7 @@ function ProductCard({ p }: { p: ProductSummary }) {
           {p.status !== "active" && <Badge color={p.status === "review" ? "amber" : "slate"}>{p.status === "review" ? "לבדיקה" : "לא באתר"}</Badge>}
         </span>
         <span className="line-clamp-2 text-xs text-slate-500">{p.name}</span>
+        <CostTag p={p} />
         <span className="mt-1.5 flex flex-wrap items-center gap-1">
           <BoxIcons icons={p.boxIcons} />
           <GeneralBadges compact badges={generalBadges(p.category, p.params, p.boxIcons).slice(0, p.boxIcons.length ? 4 : 8)} />

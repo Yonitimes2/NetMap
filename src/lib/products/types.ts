@@ -129,6 +129,13 @@ export interface ProductSummary {
   imageId?: string;
   boxIcons: BoxIcon[];
   status: "active" | "discontinued" | "review";
+  // prices: the account holder's only, removed by the server for everyone else (see pricing.ts)
+  /** cost from the distributor's price list, before VAT */
+  cost?: number;
+  /** instead of a price, or about it: "שאל את סוכן המכירות", "כולל דיסק 2TB" */
+  costNote?: string;
+  /** retail price on the maker's site, with VAT */
+  msrp?: number;
 }
 
 export interface ProductFull extends ProductSummary {
@@ -142,7 +149,11 @@ export interface ProductFull extends ProductSummary {
   features: string[];
   pageUrl?: string;
   datasheetUrl?: string;
-  msrp?: number;
+  /** the price list the cost is from, and when it was read */
+  costSource?: string;
+  costAt?: number;
+  /** the brand's markup on cost for a customer price (when the site has no retail price) */
+  markupPct?: number;
   fetchedAt?: number;
   updatedAt: number;
 }

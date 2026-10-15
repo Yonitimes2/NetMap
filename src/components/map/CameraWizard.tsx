@@ -26,6 +26,7 @@ import { Button, Input, cx } from "../ui";
 import { BoxIcons } from "../catalog/ProductIcons";
 import { ProductPicker } from "../catalog/ProductPicker";
 import { ProductModal } from "../catalog/ProductDetails";
+import { CostTag } from "../catalog/Prices";
 import { useEditor } from "./editor-store";
 import { PanelHeader } from "./panel-ui";
 
@@ -399,7 +400,10 @@ function SuggestionCard({ sg, onChoose, onDetails }: { sg: Suggestion; onChoose:
             <span className="shrink-0 text-[11px] text-slate-400">{p.brandName}</span>
           </div>
           <div className="line-clamp-1 text-xs text-slate-500">{p.name}</div>
-          <span className={cx("mt-1 inline-block rounded-full px-2 py-0.5 text-[11px] font-medium", level.className)}>{level.label}</span>
+          <span className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+            <span className={cx("inline-block rounded-full px-2 py-0.5 text-[11px] font-medium", level.className)}>{level.label}</span>
+            <CostTag p={p} />
+          </span>
         </div>
       </button>
       {p.boxIcons.length > 0 && (

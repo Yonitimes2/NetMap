@@ -192,6 +192,15 @@ const STEPS: string[][] = [
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
     `ALTER TABLE catalog_products ADD COLUMN box_icons JSON NULL`,
   ],
+  // 4: prices — the cost from a distributor's price list per product, and each brand's markup for a customer price
+  [
+    `ALTER TABLE catalog_products
+      ADD COLUMN cost DECIMAL(10,2) NULL,
+      ADD COLUMN cost_note VARCHAR(120) NULL,
+      ADD COLUMN cost_source VARCHAR(160) NULL,
+      ADD COLUMN cost_at DATETIME(3) NULL`,
+    `ALTER TABLE brands ADD COLUMN markup_pct DECIMAL(5,1) NULL`,
+  ],
 ];
 
 async function migrate(p: mysql.Pool) {

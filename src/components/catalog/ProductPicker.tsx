@@ -4,6 +4,7 @@ import { Package, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Input, Modal, cx } from "../ui";
 import { BoxIcons } from "./ProductIcons";
+import { CostTag } from "./Prices";
 import { FAMILY_LABEL, categoriesFor, fitsSystem, useCatalog } from "@/lib/products/client";
 import { CATEGORY_LABEL, FORM_LABEL, paramChips, type CatalogCategory, type FormFactor, type LensType, type ProductSummary } from "@/lib/products/types";
 import type { Device } from "@/lib/types";
@@ -169,6 +170,7 @@ function ProductRow({ p, active, fits, onClick }: { p: ProductSummary; active: b
           <span className="shrink-0 text-[11px] text-slate-400">{p.brandName}</span>
         </span>
         <span className="line-clamp-1 text-xs text-slate-500">{p.name}</span>
+        <CostTag p={p} />
         <span className="mt-1 flex flex-wrap gap-1">
           {paramChips(p.category, p.params)
             .slice(0, 6)
