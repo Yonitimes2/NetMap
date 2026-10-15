@@ -1,3 +1,5 @@
+import type { BoxIcon, CatalogCategory, ProductParams } from "./products/types";
+
 export type LayerId =
   | "network"
   | "cctv"
@@ -112,7 +114,25 @@ export interface Device {
   camera?: CameraView;
   /** only on comms racks: the cabinet's build and what is mounted in it */
   rack?: RackData;
+  /** the catalog model this equipment is (chosen from the product catalog) */
+  product?: DeviceProduct;
+  /** its planning parameters: the catalog's values when the model was chosen, editable per device */
+  spec?: ProductParams;
   updatedAt: number;
+}
+
+/** What the device keeps of its catalog product, so the map works offline and without the catalog. */
+export interface DeviceProduct {
+  id: string;
+  brandId: string;
+  brand: string;
+  model: string;
+  name: string;
+  category: CatalogCategory;
+  imageId?: string;
+  boxIcons?: BoxIcon[];
+  /** the catalog's parameter values at the time of choosing, to show what was changed on this device */
+  defaults: ProductParams;
 }
 
 // ---------------------------------------------------------------- comms rack

@@ -18,6 +18,7 @@ import { mountInRack, mountProblem } from "@/lib/rack-mount";
 import { rackKindForDevice, usedUnits } from "@/lib/rack-catalog";
 import { toast } from "@/lib/toast";
 import { isPhone, useCoarsePointer, useIsPhone } from "@/lib/use-media";
+import { fmtM } from "@/lib/products/suggest";
 
 type View = { x: number; y: number; k: number };
 
@@ -28,6 +29,7 @@ type Drag =
   | { type: "vertex"; linkId: string; index: number; insert: boolean; x: number; y: number }
   | { type: "areaVertex"; areaId: string; index: number; x: number; y: number }
   | { type: "cam"; id: string; dir: number; range: number }
+  | { type: "camFov"; id: string; fov: number }
   | { type: "wallEnd"; wallId: string; end: "a" | "b"; orig: Point; x: number; y: number }
   | { type: "obstacle"; id: string; ox: number; oy: number; sx: number; sy: number; x: number; y: number; moved: boolean }
   | { type: "opening"; id: string; offsetM: number; orig: number }
@@ -116,6 +118,8 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
   const H = floor.plan?.height ?? vb!.H;
 
   const selectedDevice = selection?.kind === "device" ? siteDevices.find((d) => d.id === selection.id) : undefined;
+  /** the camera being aimed for a model suggestion (a tap on the map aims it) */
+  const aimDev = canEdit && ed.aim && tool === "select" && !ed.pickMode ? devices.find((d) => d.id === ed.aim && d.camera) : undefined;
   const trace = useMemo(
     () => (selectedDevice ? traceDevice(selectedDevice, siteDevices, siteLinks) : null),
     [selectedDevice, siteDevices, siteLinks],
@@ -560,6 +564,22 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     setDrag({ type: "cam", id, dir, range });
   };
 
+  const startFovDrag = (e: React.PointerEvent, id: string, fov: number) => {
+    e.stopPropagation();
+    capture(e);
+    setDrag({ type: "camFov", id, fov });
+  };
+
+  /** aiming: the camera looks at the tapped point, and sees as far as it */
+  const aimAt = (p: Point) => {
+    const d = aimDev;
+    if (!d?.camera) return;
+    const range = Math.hypot(p.x - d.x, p.y - d.y) / (ppm ?? 40);
+    if (range < 0.5) return;
+    const dir = ((Math.atan2(p.y - d.y, p.x - d.x) * 180) / Math.PI + 360) % 360;
+    updateDevice(d.id, { camera: { ...d.camera, dir: Math.round(dir), range: Math.round(range * 2) / 2 } });
+  };
+
   const onPointerMove = (e: React.PointerEvent) => {
     if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, local(e));
     const w = toWorld(e);
@@ -651,6 +671,15 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
         setDrag({ ...drag, dir: (dir + 360) % 360, range: Math.round(range * 2) / 2 });
         return;
       }
+      case "camFov": {
+        // the edge follows the pointer: twice its angle from the camera's direction
+        const d = devices.find((x) => x.id === drag.id);
+        if (!d?.camera) return;
+        const a = (Math.atan2(w.y - d.y, w.x - d.x) * 180) / Math.PI;
+        const off = Math.abs(((((a - d.camera.dir) % 360) + 540) % 360) - 180);
+        setDrag({ ...drag, fov: clamp(Math.round(off * 2), 5, 360) });
+        return;
+      }
     }
   };
 
@@ -673,7 +702,7 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     }
     if (!drag) return;
     // a double tap on an empty spot zooms in there
-    if (drag.type === "pan" && !drag.moved && !drag.pick && !ed.pickMode && e.pointerType === "touch") {
+    if (drag.type === "pan" && !drag.moved && !drag.pick && !ed.pickMode && !aimDev && e.pointerType === "touch") {
       const p = local(e);
       const last = lastTap.current;
       if (last && e.timeStamp - last.t < 320 && Math.hypot(p.x - last.x, p.y - last.y) < 30) {
@@ -688,7 +717,8 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     switch (drag.type) {
       case "pan":
         if (!drag.moved) {
-          if (ed.pickMode === "region") {
+          if (aimDev) aimAt(toWorld(e));
+          else if (ed.pickMode === "region") {
             const p = toWorld(e);
             if (!regionStart) setRegionStart(p);
             else {
@@ -746,6 +776,11 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
       case "cam": {
         const d = devices.find((x) => x.id === drag.id);
         if (d?.camera) updateDevice(d.id, { camera: { ...d.camera, dir: Math.round(drag.dir), range: drag.range } });
+        break;
+      }
+      case "camFov": {
+        const d = devices.find((x) => x.id === drag.id);
+        if (d?.camera) updateDevice(d.id, { camera: { ...d.camera, fov: drag.fov } });
         break;
       }
       case "wallEnd": {
@@ -876,6 +911,13 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
     const rack = mountedIn.get(d.id);
     return rack ? ownPos(rack) : ownPos(d);
   };
+  /** a camera's view, following its handles while they're dragged */
+  const liveCam = (d: Device) => {
+    const cam = d.camera!;
+    if (drag?.type === "cam" && drag.id === d.id) return { ...cam, dir: drag.dir, range: drag.range };
+    if (drag?.type === "camFov" && drag.id === d.id) return { ...cam, fov: drag.fov };
+    return cam;
+  };
   const devById = new Map(devices.map((d) => [d.id, d]));
   const movePt = (q: Point) => {
     if (drag?.type === "wallEnd" && Math.hypot(q.x - drag.orig.x, q.y - drag.orig.y) < 0.5) return { x: drag.x, y: drag.y };
@@ -952,6 +994,40 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
   useEffect(() => {
     keepVisibleRef.current();
   }, [selection?.kind, selection?.id, ed.sheetH, ed.barH]);
+
+  /** Aiming a camera: frame it and its whole view in the map that shows (on phones, above the sheet). */
+  const showAim = () => {
+    const el = wrapRef.current;
+    const id = useEditor.getState().aim;
+    const d = id ? devices.find((x) => x.id === id) : undefined;
+    if (!el || !d?.camera) return;
+    const { dir, fov, range } = d.camera;
+    const r = range * (ppm ?? 40);
+    const pts: Point[] = [{ x: d.x, y: d.y }];
+    for (let i = 0; i <= 8; i++) {
+      const a = ((dir - fov / 2 + (fov * i) / 8) * Math.PI) / 180;
+      pts.push({ x: d.x + Math.cos(a) * r, y: d.y + Math.sin(a) * r });
+    }
+    const xs = pts.map((q) => q.x);
+    const ys = pts.map((q) => q.y);
+    const [x1, x2, y1, y2] = [Math.min(...xs), Math.max(...xs), Math.min(...ys), Math.max(...ys)];
+    // room for the tool bar and the top buttons on computers, and for the label at the tip
+    const m = isPhone() ? { l: 56, r: 56, t: 56, b: 56 } : { l: 72, r: 112, t: 120, b: 64 };
+    const aw = el.clientWidth - m.l - m.r;
+    const ah = el.clientHeight - m.t - m.b;
+    if (aw < 80 || ah < 80) return; // the sheet is up: hardly any map to show
+    const k = clamp(Math.min(aw / Math.max(1, x2 - x1), ah / Math.max(1, y2 - y1)), 0.05, 2);
+    userMoved.current = true;
+    setView({ k, x: m.l + aw / 2 - ((x1 + x2) / 2) * k, y: m.t + ah / 2 - ((y1 + y2) / 2) * k });
+  };
+  const showAimRef = useRef(showAim);
+  useEffect(() => {
+    showAimRef.current = showAim;
+  });
+  // when aiming starts, and when the sheet goes back down for it
+  useEffect(() => {
+    if (ed.aim) showAimRef.current();
+  }, [ed.aim, ed.sheetH]);
 
 
   const tracing = !!trace && trace.linkIds.size > 0;
@@ -1098,19 +1174,58 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
   // the red handle at the tip of the selected camera's view, for aiming it on the map
   const camHandle = (() => {
     if (!canEdit || tool !== "select" || !selectedDevice?.camera || selectedDevice.floorId !== floor.id) return null;
-    const cam = drag?.type === "cam" ? { ...selectedDevice.camera, dir: drag.dir, range: drag.range } : selectedDevice.camera;
+    const cam = liveCam(selectedDevice);
     const r = cam.range * (ppm ?? 40);
     const p = devPos(selectedDevice);
+    const at = (deg: number, f = 1) => ({ x: p.x + Math.cos((deg * Math.PI) / 180) * r * f, y: p.y + Math.sin((deg * Math.PI) / 180) * r * f });
+    const tip = at(cam.dir);
     return {
       id: selectedDevice.id,
       dir: cam.dir,
       range: cam.range,
+      fov: cam.fov,
       p,
-      hx: p.x + Math.cos((cam.dir * Math.PI) / 180) * r,
-      hy: p.y + Math.sin((cam.dir * Math.PI) / 180) * r,
+      hx: tip.x,
+      hy: tip.y,
+      // while aiming: a handle on each edge of the cone sets its width (part way out, so they stay in view)
+      edges: aimDev?.id === selectedDevice.id ? [at(cam.dir - cam.fov / 2, 0.6), at(cam.dir + cam.fov / 2, 0.6)] : null,
     };
   })();
   const selectedArea = selection?.kind === "area" ? areas.find((a) => a.id === selection.id) : undefined;
+
+  const camHandleEl = (() => {
+    const h = camHandle;
+    if (!h) return null;
+    const r = 7 * s * hs;
+    // while aiming: the distance, angle and width on the middle line, inside the framed view
+    const lx = h.p.x + Math.cos((h.dir * Math.PI) / 180) * h.range * (ppm ?? 40) * 0.5;
+    const ly = h.p.y + Math.sin((h.dir * Math.PI) / 180) * h.range * (ppm ?? 40) * 0.5;
+    const width = h.fov < 170 ? 2 * h.range * Math.tan((h.fov * Math.PI) / 360) : null;
+    return (
+      <g>
+        <line x1={h.p.x} y1={h.p.y} x2={h.hx} y2={h.hy} stroke="#ef4444" strokeDasharray="4 3" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
+        {h.edges?.map((q, i) => (
+          <circle
+            key={i}
+            cx={q.x}
+            cy={q.y}
+            r={r * 0.85}
+            fill="#fff"
+            stroke="#ef4444"
+            strokeWidth={2.5 * s}
+            style={{ cursor: "ew-resize" }}
+            onPointerDown={(e) => startFovDrag(e, h.id, h.fov)}
+          />
+        ))}
+        <circle cx={h.hx} cy={h.hy} r={r} fill="#ef4444" stroke="#fff" strokeWidth={2 * s} style={{ cursor: "grab" }} onPointerDown={(e) => startCamDrag(e, h.id, h.dir, h.range)} />
+        {h.edges && (
+          <text x={lx} y={ly + 4 * s} fontSize={12 * s} fontWeight={700} textAnchor="middle" fill="#b91c1c" style={halo(s)} pointerEvents="none">
+            {`${fmtM(h.range)} מ׳ · ${Math.round(h.fov)}°${width ? ` · רוחב ${fmtM(width)} מ׳` : ""}`}
+          </text>
+        )}
+      </g>
+    );
+  })();
 
   return (
     <div className="absolute inset-0 flex flex-col">
@@ -1279,18 +1394,18 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
             visibleDevices
               .filter((d) => d.camera)
               .map((d) => {
-                const cam =
-                  drag?.type === "cam" && drag.id === d.id ? { ...d.camera!, dir: drag.dir, range: drag.range } : d.camera!;
+                const cam = liveCam(d);
                 const p = devPos(d);
+                const aiming = aimDev?.id === d.id;
                 return (
                   <path
                     key={`cone-${d.id}`}
                     d={wedge(p, cam.range * (ppm ?? 40), cam.dir, cam.fov)}
                     fill="#ef4444"
-                    fillOpacity={dimDevice(d.id) ? 0.03 : 0.08}
+                    fillOpacity={aiming ? 0.16 : dimDevice(d.id) ? 0.03 : 0.08}
                     stroke="#ef4444"
-                    strokeOpacity={0.35}
-                    strokeWidth={1}
+                    strokeOpacity={aiming ? 0.8 : 0.35}
+                    strokeWidth={aiming ? 2 : 1}
                     vectorEffect="non-scaling-stroke"
                     pointerEvents="none"
                   />
@@ -1532,22 +1647,8 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
             );
           })}
 
-          {/* camera direction handle */}
-          {camHandle && (
-            <g>
-              <line x1={camHandle.p.x} y1={camHandle.p.y} x2={camHandle.hx} y2={camHandle.hy} stroke="#ef4444" strokeDasharray="4 3" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
-              <circle
-                cx={camHandle.hx}
-                cy={camHandle.hy}
-                r={7 * s * hs}
-                fill="#ef4444"
-                stroke="#fff"
-                strokeWidth={2 * s}
-                style={{ cursor: "grab" }}
-                onPointerDown={(e) => startCamDrag(e, camHandle.id, camHandle.dir, camHandle.range)}
-              />
-            </g>
-          )}
+          {/* camera direction handle (while aiming it's drawn on top of everything, below) */}
+          {!camHandle?.edges && camHandleEl}
 
           {/* notes */}
           {notes.map((n) => {
@@ -1720,6 +1821,25 @@ export function MapCanvas({ floor, canEdit }: { floor: Floor; canEdit: boolean }
                 );
               })()}
             </g>
+          )}
+
+          {/* aiming a camera: the whole map takes taps (they aim it), its handles stay on top */}
+          {aimDev && camHandle?.edges && (
+            <>
+              <rect
+                x={-1e5}
+                y={-1e5}
+                width={2e5}
+                height={2e5}
+                fill="transparent"
+                style={{ cursor: "crosshair" }}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  onBackgroundDown(e);
+                }}
+              />
+              {camHandleEl}
+            </>
           )}
         </g>
       </svg>

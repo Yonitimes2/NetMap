@@ -35,6 +35,8 @@ import { Button, Field, Input, Modal, Select, Textarea, cx } from "../ui";
 import { useEditor } from "./editor-store";
 import { PanelHeader, Section } from "./panel-ui";
 import { RackSection } from "./RackSection";
+import { DeviceProductSection } from "./DeviceProduct";
+import { CameraWizard } from "./CameraWizard";
 import { askConfirm } from "../dialogs";
 import { ObstaclePanel, OpeningPanel, RoomPanel, WallPanel } from "./StructurePanels";
 
@@ -73,6 +75,7 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
   const updateDevice = useApp((s) => s.updateDevice);
   const deleteDevice = useApp((s) => s.deleteDevice);
   const select = useEditor((s) => s.select);
+  const aiming = useEditor((s) => s.aim === id);
 
   const siteDevices = useMemo(() => allDevices.filter((x) => x.siteId === d?.siteId), [allDevices, d?.siteId]);
   const siteLinks = useMemo(() => allLinks.filter((x) => x.siteId === d?.siteId), [allLinks, d?.siteId]);
@@ -86,6 +89,9 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
   const upd = (patch: Partial<Device>) => updateDevice(d.id, patch);
   const myLinks = siteLinks.filter((l) => l.kind === "cable" && (l.a?.deviceId === d.id || l.b?.deviceId === d.id));
   const floorName = (fid: string) => floors.find((f) => f.id === fid)?.name;
+
+  // suggesting a model for this camera takes the whole panel
+  if (aiming && canEdit && d.camera) return <CameraWizard d={d} siteDevices={siteDevices} onChange={upd} />;
 
   return (
     <div>
@@ -107,6 +113,8 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
           </div>
         </div>
       </PanelHeader>
+
+      <DeviceProductSection d={d} siteDevices={siteDevices} ro={ro} onChange={upd} />
 
       <MountedIn d={d} onGoto={onGoto} />
 

@@ -65,6 +65,8 @@ interface EditorState {
   /** while set, clicks on the map add references instead of selecting */
   pickMode: null | "object" | "region";
   selection: Selection;
+  /** the camera being aimed for a model suggestion: taps on the map aim it, its cone edges set the width */
+  aim: string | null;
   layers: Record<LayerId, boolean>;
   showLabels: boolean;
   showCones: boolean;
@@ -106,6 +108,7 @@ interface EditorState {
   clearRefs: () => void;
   setPickMode: (m: null | "object" | "region") => void;
   select: (s: Selection) => void;
+  setAim: (id: string | null) => void;
   toggleLayer: (l: LayerId) => void;
   setShowLabels: (v: boolean) => void;
   setShowCones: (v: boolean) => void;
@@ -142,6 +145,7 @@ export const useEditor = create<EditorState>((set) => ({
   refs: [],
   pickMode: null,
   selection: null,
+  aim: null,
   layers: allLayers(),
   showLabels: true,
   showCones: true,
@@ -157,8 +161,9 @@ export const useEditor = create<EditorState>((set) => ({
   cancelReq: 0,
   requestFinish: () => set((s) => ({ finishReq: s.finishReq + 1 })),
   requestCancel: () => set((s) => ({ cancelReq: s.cancelReq + 1 })),
-  setTool: (tool) => set({ tool }),
-  setPlaceType: (placeType) => set({ placeType, tool: "place" }),
+  // another tool ends aiming
+  setTool: (tool) => set(tool === "select" ? { tool } : { tool, aim: null }),
+  setPlaceType: (placeType) => set({ placeType, tool: "place", aim: null }),
   setCableType: (cableType) => set({ cableType }),
   setTrayType: (trayType) => set({ trayType }),
   setCableRun: (cableRun) => set({ cableRun }),
@@ -179,12 +184,16 @@ export const useEditor = create<EditorState>((set) => ({
   removeRef: (i) => set((s) => ({ refs: s.refs.filter((_, j) => j !== i) })),
   clearRefs: () => set({ refs: [] }),
   setPickMode: (pickMode) => set(pickMode ? { pickMode, tool: "select" } : { pickMode }),
-  select: (selection) => set(selection ? { selection, sideTab: "details" } : { selection }),
+  // aiming ends when another item is selected
+  select: (selection) =>
+    set((s) => ({ selection, aim: selection?.id === s.aim ? s.aim : null, ...(selection ? { sideTab: "details" as const } : {}) })),
+  setAim: (aim) => set(aim ? { aim, tool: "select", pickMode: null } : { aim }),
   toggleLayer: (l) => set((s) => ({ layers: { ...s.layers, [l]: !s.layers[l] } })),
   setShowLabels: (showLabels) => set({ showLabels }),
   setShowCones: (showCones) => set({ showCones }),
-  focusOn: (id) => set((s) => ({ focus: { id, n: (s.focus?.n ?? 0) + 1 }, selection: { kind: "device", id }, sideTab: "details" })),
+  focusOn: (id) =>
+    set((s) => ({ focus: { id, n: (s.focus?.n ?? 0) + 1 }, selection: { kind: "device", id }, sideTab: "details", aim: id === s.aim ? s.aim : null })),
   fit: () => set((s) => ({ fitN: s.fitN + 1 })),
   reset: () =>
-    set({ tool: "select", selection: null, layers: allLayers(), focus: null, assistantOpen: false, refs: [], pickMode: null }),
+    set({ tool: "select", selection: null, aim: null, layers: allLayers(), focus: null, assistantOpen: false, refs: [], pickMode: null }),
 }));
