@@ -16,6 +16,7 @@ import type {
   MapNote,
   Obstacle,
   Opening,
+  Org,
   Site,
   Wall,
 } from "./types";
@@ -70,6 +71,8 @@ export interface AppData {
 export interface SyncData {
   /** the signed-in user the cached data belongs to */
   ownerId: string | null;
+  /** the accounts the user works in (system admins: every account), with their role in each */
+  orgs: Org[];
   /** per account: server revision of the cached data, and the user's role in it */
   meta: Record<string, { rev: number; role: AccountRole }>;
   /** accounts with changes not saved on the server yet (the number grows with each change) */
@@ -89,6 +92,7 @@ export const emptyData = (): AppData & SyncData => ({
   obstacles: [],
   chats: {},
   ownerId: null,
+  orgs: [],
   meta: {},
   dirty: {},
 });
@@ -116,8 +120,8 @@ export const readLegacy = async () => {
 export const writeLegacy = (l: LegacyData) => idbSet("netmap-legacy", JSON.stringify(l), idb());
 
 interface Actions {
-  /** New business (system admins). The owner is added later, on the users tab, if at all. */
-  createAccount: (a: Omit<Account, "id" | "createdAt">) => string;
+  /** New customer in one of the user's accounts. Its business owner is added later, on the users tab, if at all. */
+  createAccount: (a: Omit<Account, "id" | "createdAt"> & { orgId: string }) => string;
   updateAccount: (id: string, patch: Partial<Account>) => void;
 
   createSite: (accountId: string, name: string, address?: string) => string;
@@ -188,10 +192,13 @@ export const useApp = create<AppState>()(
 
         createAccount: (a) => {
           const id = uid();
-          set((s) => ({
-            accounts: [...s.accounts, { ...a, id, createdAt: Date.now() }],
-            meta: { ...s.meta, [id]: { rev: 0, role: "super" } },
-          }));
+          set((s) => {
+            const orgRole = s.orgs.find((o) => o.id === a.orgId)?.role ?? "super";
+            return {
+              accounts: [...s.accounts, { ...a, id, createdAt: Date.now() }],
+              meta: { ...s.meta, [id]: { rev: 0, role: orgRole } },
+            };
+          });
           return id;
         },
         updateAccount: (id, patch) => set((s) => ({ accounts: patchById(s.accounts, id, patch) })),

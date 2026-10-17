@@ -1,12 +1,14 @@
 "use client";
 
-import { ExternalLink, FileText, Pencil, RotateCcw } from "lucide-react";
+import { ExternalLink, FileText, Maximize2, Pencil, RotateCcw } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
 import { Badge, Modal, cx } from "../ui";
-import { authApi, useSession } from "@/lib/session-client";
+import { authApi } from "@/lib/session-client";
+import { useSeesPrices } from "@/lib/access";
 import { BoxIcons, GeneralBadges, TechTiles, generalBadges, techTiles } from "./ProductIcons";
 import { ParamEditor } from "./ParamEditor";
 import { PricesSection } from "./Prices";
+import { ImageViewer, ZoomableImage } from "../ImageViewer";
 import { PARAM_FIELDS, formatParam, type CatalogCategory, type ProductFull } from "@/lib/products/types";
 
 /**
@@ -17,14 +19,15 @@ import { PARAM_FIELDS, formatParam, type CatalogCategory, type ProductFull } fro
 export function ProductDetails({
   product,
   single,
-  isAdmin,
+  showPrices,
   onSave,
   extra,
   side,
 }: {
   product: ProductFull;
   single?: boolean;
-  isAdmin: boolean;
+  /** the account owner's own costs and customer price */
+  showPrices: boolean;
   /** admins correct parameter values; without it the parameters are read-only */
   onSave?: (patch: Record<string, unknown>) => void;
   extra?: ReactNode;
@@ -52,8 +55,8 @@ export function ProductDetails({
         </div>
         {product.fetchedAt && <p className="mt-1 text-xs text-slate-400">נקרא מהאתר: {new Date(product.fetchedAt).toLocaleString("he-IL")}</p>}
       </section>
-      {/* prices are the account holder's (the server doesn't send them to anyone else) */}
-      {isAdmin && <PricesSection product={product} />}
+      {/* prices are an account owner's, their own account's (the server doesn't send them to anyone else) */}
+      {showPrices && <PricesSection product={product} />}
       {extra}
     </>
   );
@@ -95,7 +98,7 @@ export function ProductDetails({
 
 /** A product in a popup, loaded by id: from the map, without leaving it. */
 export function ProductModal({ id, title, extra, footer, onClose }: { id: string; title?: string; extra?: ReactNode; footer?: ReactNode; onClose: () => void }) {
-  const isAdmin = useSession((s) => s.user?.role === "admin");
+  const showPrices = useSeesPrices();
   const [product, setProduct] = useState<ProductFull | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -114,7 +117,7 @@ export function ProductModal({ id, title, extra, footer, onClose }: { id: string
       ) : !product ? (
         <p className="p-10 text-center text-sm text-slate-400">טוען את פרטי המוצר…</p>
       ) : (
-        <ProductDetails product={product} single isAdmin={isAdmin} extra={extra} />
+        <ProductDetails product={product} single showPrices={showPrices} extra={extra} />
       )}
     </Modal>
   );
@@ -137,15 +140,26 @@ function Highlights({ product }: { product: ProductFull }) {
 
 function Gallery({ ids, compact }: { ids: string[]; compact?: boolean }) {
   const [current, setCurrent] = useState(0);
+  const [zoom, setZoom] = useState(false);
   if (!ids.length) return <div className={cx("grid place-items-center rounded-2xl bg-white text-sm text-slate-400 ring-1 ring-slate-200", compact ? "h-40" : "aspect-square")}>אין תמונה</div>;
   return (
     <div className="rounded-2xl bg-white p-3 ring-1 ring-slate-200">
-      {/* eslint-disable-next-line @next/next/no-img-element -- served by our API with the session cookie */}
-      <img
-        src={`/api/catalog/images/${ids[Math.min(current, ids.length - 1)]}?w=800`}
-        alt=""
-        className={cx("mx-auto w-full object-contain", compact ? "h-56 sm:h-72" : "aspect-square max-h-72 lg:max-h-none")}
-      />
+      {/* pinch the picture where it is (the full size, to read the small print); the corner button opens it on the whole screen */}
+      <ZoomableImage
+        key={ids[Math.min(current, ids.length - 1)]}
+        src={`/api/catalog/images/${ids[Math.min(current, ids.length - 1)]}`}
+        className={cx("w-full", compact ? "h-56 sm:h-72" : "aspect-square max-h-72 lg:max-h-none")}
+      >
+        <button
+          onClick={() => setZoom(true)}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="absolute bottom-1 end-1 grid size-9 place-items-center rounded-full bg-white/90 text-slate-600 shadow ring-1 ring-slate-200"
+          aria-label="תמונה במסך מלא"
+        >
+          <Maximize2 size={16} />
+        </button>
+      </ZoomableImage>
+      {zoom && <ImageViewer srcs={ids.map((id) => `/api/catalog/images/${id}`)} index={Math.min(current, ids.length - 1)} onClose={() => setZoom(false)} />}
       {ids.length > 1 && (
         <div className="mt-2 flex gap-2 overflow-x-auto">
           {ids.map((id, i) => (

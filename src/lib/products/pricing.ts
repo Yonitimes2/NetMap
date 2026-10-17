@@ -12,6 +12,23 @@ export const DEFAULT_MARKUP = 40;
 
 export const nis = (n: number) => `₪${Math.round(n).toLocaleString("he-IL")}`;
 
+/**
+ * The disk a recorder comes with, in TB, as the account's price list sells it: "כולל דיסק 2TB" (read
+ * from a "-2T" line), 0 when the list prices it without one, undefined when the list doesn't have it.
+ */
+export function includedDisk(p: { cost?: number; costNote?: string } | undefined): number | undefined {
+  const m = p?.costNote?.match(/כולל דיסק\s*(\d+(?:\.\d+)?)\s*TB/i);
+  if (m) return Number(m[1]);
+  return p?.cost !== undefined ? 0 : undefined;
+}
+
+export const diskText = (tb: number | undefined) => (tb === undefined ? undefined : tb ? `כולל דיסק ${tb}TB` : "בלי דיסק");
+
+/** A price before VAT, with it: what's shown everywhere but a product's own page. */
+export const withVat = (n: number) => n * (1 + VAT);
+/** Back to before VAT, from a price typed with it (kept to the agora). */
+export const beforeVat = (n: number) => Math.round((n / (1 + VAT)) * 100) / 100;
+
 /** "פיקוק אוקטובר" → "מחירון פיקוק אוקטובר"; a name that already says it stays as is */
 export const priceListName = (source: string) => (source.startsWith("מחירון") ? source : `מחירון ${source}`);
 

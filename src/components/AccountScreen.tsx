@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, type FormEvent } from "react";
 import { Eye, Layers, MapPin, Plus, Trash2, UserPlus, Wand2 } from "lucide-react";
 import { AppShell } from "./AppShell";
@@ -13,6 +13,8 @@ import { PASSWORD_MIN, authApi } from "@/lib/session-client";
 import { useSync } from "@/lib/sync";
 import { toast } from "@/lib/toast";
 import { PasswordInput, randomPassword } from "./auth/PasswordInput";
+import { StageBadge } from "./project/Stages";
+import { stageOf } from "@/lib/project";
 import type { Role } from "@/lib/types";
 
 export function AccountScreen() {
@@ -24,7 +26,7 @@ function AccountInner({ accountId }: { accountId: string }) {
   const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
   const allowed = can.view(useRole(accountId));
   return (
-    <AppShell crumbs={allowed ? [{ label: account?.name ?? "" }] : []}>
+    <AppShell crumbs={allowed ? [{ label: "לקוחות", href: "/" }, { label: account?.name ?? "" }] : []}>
       <AccountBody accountId={accountId} />
     </AppShell>
   );
@@ -34,33 +36,35 @@ function AccountBody({ accountId }: { accountId: string }) {
   const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
   const role = useRole(accountId);
   const [tab, setTab] = useState<"sites" | "users" | "audit" | "details">("sites");
+  const org = useApp((s) => s.orgs.find((o) => o.id === account?.orgId));
   const syncReady = useSync((s) => s.ready);
 
   if (!account && !syncReady) return <p className="p-10 text-center text-slate-400">טוען…</p>;
   if (!account || !can.view(role)) {
     return (
       <div className="p-6">
-        <Empty>אין לך גישה לחשבון הזה, או שהוא לא קיים.</Empty>
+        <Empty>אין לך גישה ללקוח הזה, או שהוא לא קיים.</Empty>
       </div>
     );
   }
 
   const tabs = [
-    { id: "sites" as const, label: "אתרים" },
+    { id: "sites" as const, label: "פרויקטים" },
     ...(can.manageUsers(role)
       ? [
           { id: "users" as const, label: "משתמשים והרשאות" },
           { id: "audit" as const, label: "יומן צפייה בסיסמאות" },
         ]
       : []),
-    { id: "details" as const, label: "פרטי העסק" },
+    { id: "details" as const, label: "פרטי הלקוח" },
   ];
 
   return (
     <div className="mx-auto max-w-5xl p-4 sm:p-6">
-      <div className="mb-4 flex flex-wrap items-center gap-3">
+      <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-1">
         <h1 className="text-2xl font-bold">{account.name}</h1>
-        {role && <Badge color={role === "admin" ? "blue" : role === "super" ? "amber" : "slate"}>{ROLE_LABEL[role]}</Badge>}
+        {role && <Badge color={role === "owner" || role === "admin" ? "blue" : role === "super" ? "amber" : "slate"}>{ROLE_LABEL[role]}</Badge>}
+        {org && org.role === "super" && <span className="text-sm text-slate-500">לקוח של {org.name}</span>}
       </div>
       <div className="mb-5 flex gap-1 overflow-x-auto border-b border-slate-200 no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0">
         {tabs.map((t) => (
@@ -88,37 +92,46 @@ function SitesTab({ accountId }: { accountId: string }) {
   const allSites = useApp((s) => s.sites);
   const floors = useApp((s) => s.floors);
   const devices = useApp((s) => s.devices);
+  const account = useApp((s) => s.accounts.find((a) => a.id === accountId));
   const createSite = useApp((s) => s.createSite);
+  const router = useRouter();
   const role = useRole(accountId);
-  const sites = allSites.filter((s) => s.accountId === accountId);
+  const sites = allSites.filter((s) => s.accountId === accountId).sort((a, b) => b.createdAt - a.createdAt);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
   const [address, setAddress] = useState("");
 
   return (
     <>
-      <div className="mb-3 flex justify-end">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <p className="text-sm text-slate-500">כל פרויקט הוא אתר עם מפה משלו, מהצעת המחיר ועד השירות.</p>
         {can.manageSites(role) && (
-          <Button variant="primary" onClick={() => setAdding(true)}>
-            <Plus size={16} /> אתר / סניף חדש
+          <Button
+            variant="primary"
+            className="shrink-0"
+            onClick={() => {
+              setAddress(account?.address ?? "");
+              setAdding(true);
+            }}
+          >
+            <Plus size={16} /> פרויקט חדש
           </Button>
         )}
       </div>
       {sites.length === 0 ? (
-        <Empty>עדיין אין אתרים. הוסף אתר כדי להתחיל למפות.</Empty>
+        <Empty>עדיין אין פרויקטים. פתחו פרויקט כדי להתחיל לתכנן.</Empty>
       ) : (
         <div className="grid gap-3 sm:grid-cols-2">
           {sites.map((s) => {
             const fl = floors.filter((f) => f.siteId === s.id);
-            const dv = devices.filter((d) => d.siteId === s.id);
+            const dv = devices.filter((d) => d.siteId === s.id && !d.existing);
             const cams = dv.filter((d) => d.type.startsWith("cam-")).length;
             return (
-              <Link
-                key={s.id}
-                href={`/a/${accountId}/s/${s.id}`}
-                className="rounded-2xl bg-white p-4 ring-1 ring-slate-200 transition hover:shadow-md"
-              >
-                <div className="font-semibold">{s.name}</div>
+              <Link key={s.id} href={`/a/${accountId}/s/${s.id}`} className="rounded-2xl bg-white p-4 ring-1 ring-slate-200 transition hover:shadow-md">
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1 font-semibold">{s.name}</div>
+                  <StageBadge stage={stageOf(s)} />
+                </div>
                 {s.address && (
                   <div className="mt-1 flex items-center gap-1 text-xs text-slate-500">
                     <MapPin size={12} /> {s.address}
@@ -129,7 +142,7 @@ function SitesTab({ accountId }: { accountId: string }) {
                     <Layers size={12} className="me-1" /> {fl.length} קומות
                   </Badge>
                   <Badge color="blue">{dv.length} רכיבים</Badge>
-                  <Badge color="red">{cams} מצלמות</Badge>
+                  {cams > 0 && <Badge color="red">{cams} מצלמות</Badge>}
                 </div>
               </Link>
             );
@@ -138,27 +151,27 @@ function SitesTab({ accountId }: { accountId: string }) {
       )}
       {adding && (
         <Modal
-          title="אתר חדש"
+          title="פרויקט חדש"
           onClose={() => setAdding(false)}
           footer={
             <Button
               variant="primary"
               disabled={!name.trim()}
               onClick={() => {
-                createSite(accountId, name.trim(), address);
+                const id = createSite(accountId, name.trim(), address);
                 setAdding(false);
                 setName("");
-                setAddress("");
+                router.push(`/a/${accountId}/s/${id}`);
               }}
             >
-              הוסף אתר
+              פתיחת הפרויקט
             </Button>
           }
         >
-          <Field label="שם האתר">
-            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="סניף ראשי, מחסן…" autoFocus />
+          <Field label="שם הפרויקט">
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="מצלמות בסניף הראשי, הרחבת רשת…" autoFocus />
           </Field>
-          <Field label="כתובת">
+          <Field label="כתובת האתר">
             <Input value={address} onChange={(e) => setAddress(e.target.value)} />
           </Field>
         </Modal>
@@ -203,7 +216,7 @@ function UsersTab({ accountId }: { accountId: string }) {
     }
   };
 
-  if (!saved) return <p className="p-6 text-center text-sm text-slate-500">העסק עוד נשמר בשרת. אפשר יהיה להוסיף משתמשים בעוד רגע.</p>;
+  if (!saved) return <p className="p-6 text-center text-sm text-slate-500">הלקוח עוד נשמר בשרת. אפשר יהיה להוסיף משתמשים בעוד רגע.</p>;
   if (error) return <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>;
   if (!members) return <p className="p-6 text-center text-slate-400">טוען…</p>;
 
@@ -211,7 +224,8 @@ function UsersTab({ accountId }: { accountId: string }) {
     <>
       <div className="mb-3 flex items-center justify-between gap-3">
         <p className="text-sm text-slate-500">
-          <b>מנהל</b>: גישה מלאה וניהול משתמשים. <b>טכנאי</b>: עריכת המיפוי וצפייה בסיסמאות, בלי ניהול משתמשים.
+          גישה ללקוח הזה בלבד. <b>בעל העסק</b>: רואה את הפרויקטים שלו ומנהל את האנשים שלו, בלי מחירים. <b>טכנאי</b>: עריכת המפות וצפייה בסיסמאות.
+          הטכנאים של החשבון שלך רואים את כל הלקוחות, ולא צריך להוסיף אותם כאן.
         </p>
         <Button onClick={() => setAdding("member")}>
           <UserPlus size={16} /> הוספת משתמש
@@ -231,7 +245,7 @@ function UsersTab({ accountId }: { accountId: string }) {
       <div className="divide-y divide-slate-100 rounded-2xl bg-white ring-1 ring-slate-200 empty:hidden">
         {members.map((m) => {
           // a business admin can't remove the last admin role (they'd lock themselves out)
-          const locked = myRole !== "super" && m.role === "admin" && adminCount === 1;
+          const locked = myRole === "admin" && m.role === "admin" && adminCount === 1;
           return (
             <div key={m.userId} className="flex flex-wrap items-center gap-3 p-3">
               <div className="min-w-0 flex-1">
@@ -255,7 +269,7 @@ function UsersTab({ accountId }: { accountId: string }) {
                 disabled={locked}
                 title={locked ? "חייב להישאר לפחות מנהל אחד" : "הסר גישה"}
                 onClick={async () =>
-                  (await askConfirm({ title: "הסרת גישה", message: `להסיר את הגישה של ${m.name} לחשבון? הכניסה שלו למערכת נשארת.`, danger: true, okLabel: "הסר" })) &&
+                  (await askConfirm({ title: "הסרת גישה", message: `להסיר את הגישה של ${m.name} ללקוח? הכניסה שלו למערכת נשארת.`, danger: true, okLabel: "הסר" })) &&
                   change(() => authApi(`/api/accounts/${accountId}/members/${m.userId}`, "DELETE"))
                 }
               >
@@ -294,7 +308,7 @@ function AddMemberModal({
     setBusy(true);
     try {
       await onAdd({ name: f.name.trim(), email: f.email.trim(), role: f.role, password: f.password || undefined });
-      toast(`${f.name.trim() || f.email.trim()} נוסף לעסק`);
+      toast(`${f.name.trim() || f.email.trim()} קיבל גישה`);
       onClose();
     } catch (err) {
       setError((err as Error).message);
@@ -303,7 +317,7 @@ function AddMemberModal({
   };
   return (
     <Modal
-      title={owner ? "הוספת בעל העסק" : "הוספת משתמש לחשבון"}
+      title={owner ? "הוספת בעל העסק" : "גישה ללקוח הזה"}
       onClose={onClose}
       footer={
         <Button type="submit" form="member-form" variant="primary" disabled={busy || !/\S+@\S+/.test(f.email)}>
@@ -366,7 +380,7 @@ function AuditTab({ accountId }: { accountId: string }) {
   }, [accountId]);
   if (error) return <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>;
   if (!rows) return <p className="p-6 text-center text-slate-400">טוען…</p>;
-  if (!rows.length) return <Empty>עדיין לא נצפו סיסמאות בחשבון הזה.</Empty>;
+  if (!rows.length) return <Empty>עדיין לא נצפו סיסמאות אצל הלקוח הזה.</Empty>;
   return (
     <div className="divide-y divide-slate-100 rounded-2xl bg-white ring-1 ring-slate-200">
       {rows.map((r) => (

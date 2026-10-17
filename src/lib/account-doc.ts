@@ -19,8 +19,14 @@ export interface AccountDoc {
   chats: Record<string, ChatMessage[]>;
 }
 
-/** The signed-in user's role in an account; "super" = system admin (sees and manages everything). */
-export type AccountRole = "admin" | "technician" | "super";
+/**
+ * The signed-in user's role in a customer:
+ * - "owner": an owner of the account the customer belongs to (everything, prices and money included)
+ * - "technician": a technician of that account, or one given access to this customer (no money, no users)
+ * - "admin": the customer's own business owner (their maps and their people; no prices)
+ * - "super": a system admin who isn't in the account (sees and manages everything but its money)
+ */
+export type AccountRole = "owner" | "admin" | "technician" | "super";
 
 /** Lists of items that belong to a site (each item has siteId). */
 export const SITE_ITEM_KEYS = ["floors", "devices", "links", "areas", "notes", "walls", "openings", "obstacles"] as const;
@@ -95,7 +101,8 @@ export function docProblem(accountId: string, doc: unknown): string | null {
   const d = doc as Partial<AccountDoc> | null;
   if (!d || typeof d !== "object") return "נתונים לא תקינים";
   if (!d.account || d.account.id !== accountId) return "מזהה העסק לא תואם";
-  if (typeof d.account.name !== "string" || !d.account.name.trim() || d.account.name.length > 200) return "שם העסק לא תקין";
+  if (typeof d.account.name !== "string" || !d.account.name.trim() || d.account.name.length > 200) return "שם הלקוח לא תקין";
+  if (d.account.orgId !== undefined && !validId(d.account.orgId)) return "החשבון לא תקין";
   if (!Array.isArray(d.sites) || !d.sites.every((x) => x && validId(x.id) && x.accountId === accountId)) return "אתרים לא תקינים";
   const siteIds = new Set(d.sites.map((x) => x.id));
   if (siteIds.size !== d.sites.length) return "אתרים כפולים";

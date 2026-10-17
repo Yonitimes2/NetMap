@@ -1,10 +1,10 @@
 import { Suspense } from "react";
-import { SiteScreen } from "@/components/SiteScreen";
+import { ProjectScreen } from "@/components/project/ProjectScreen";
 
-export default function SitePage() {
+export default function ProjectPage() {
   return (
     <Suspense>
-      <SiteScreen />
+      <ProjectScreen />
     </Suspense>
   );
 }

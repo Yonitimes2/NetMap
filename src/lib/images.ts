@@ -82,11 +82,8 @@ function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number)
   );
 }
 
-/** Downscales an image file to maxDim and stores it. */
-export async function storeImageFile(
-  file: File,
-  maxDim = 1600,
-): Promise<{ src: string; width: number; height: number }> {
+/** An image file scaled down to maxDim, as a JPEG. */
+export async function shrinkImage(file: Blob, maxDim = 1600, quality = 0.85): Promise<{ blob: Blob; width: number; height: number }> {
   const url = URL.createObjectURL(file);
   try {
     const img = await loadImg(url);
@@ -100,11 +97,16 @@ export async function storeImageFile(
     ctx.fillStyle = "#fff";
     ctx.fillRect(0, 0, width, height);
     ctx.drawImage(img, 0, 0, width, height);
-    const blob = await canvasToBlob(canvas, "image/jpeg", 0.85);
-    return { src: await saveImage(blob), width, height };
+    return { blob: await canvasToBlob(canvas, "image/jpeg", quality), width, height };
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+/** Downscales an image file to maxDim and stores it. */
+export async function storeImageFile(file: File, maxDim = 1600): Promise<{ src: string; width: number; height: number }> {
+  const { blob, width, height } = await shrinkImage(file, maxDim);
+  return { src: await saveImage(blob), width, height };
 }
 
 /** Renders one page of a PDF to an image and stores it. */

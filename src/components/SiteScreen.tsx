@@ -32,7 +32,8 @@ export function SiteScreen() {
         allowed
           ? [
               { label: account?.name ?? "", href: `/a/${accountId}` },
-              { label: site?.name ?? "" },
+              // the project's page; on phones its name is the title and the back arrow goes there
+              { label: site?.name ?? "", href: `/a/${accountId}/s/${siteId}` },
             ]
           : []
       }
@@ -73,7 +74,7 @@ function SiteBody({ accountId, siteId }: { accountId: string; siteId: string }) 
   if (!site || !can.view(role)) {
     return (
       <div className="w-full p-6">
-        <Empty>אין לך גישה לאתר הזה.</Empty>
+        <Empty>אין לך גישה לפרויקט הזה.</Empty>
       </div>
     );
   }

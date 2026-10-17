@@ -80,6 +80,12 @@ export interface DeviceTypeDef {
   camera?: boolean;
   /** device that terminates a trace for its layer (NVR, router, amp…) */
   core?: boolean;
+  /**
+   * not sold as equipment: it's work (a network point), the building's (an electrical panel), or the
+   * customer's own (a router from the internet provider, computers, screens). A quote leaves it out
+   * unless the owner puts it back.
+   */
+  notSold?: boolean;
   fields: FieldDef[];
 }
 
@@ -98,6 +104,7 @@ export const DEVICE_TYPES: DeviceTypeDef[] = [
   {
     id: "modem",
     label: "מודם / ONT",
+    notSold: true,
     layer: "network",
     icon: Antenna,
     network: true,
@@ -112,6 +119,7 @@ export const DEVICE_TYPES: DeviceTypeDef[] = [
   {
     id: "router",
     label: "ראוטר",
+    notSold: true,
     layer: "network",
     icon: Router,
     network: true,
@@ -179,6 +187,7 @@ export const DEVICE_TYPES: DeviceTypeDef[] = [
   {
     id: "jack",
     label: "נקודת רשת",
+    notSold: true,
     layer: "network",
     icon: Plug,
     fields: [
@@ -202,6 +211,7 @@ export const DEVICE_TYPES: DeviceTypeDef[] = [
   {
     id: "pc",
     label: "מחשב / עמדה",
+    notSold: true,
     layer: "network",
     icon: Monitor,
     network: true,
@@ -365,6 +375,7 @@ export const DEVICE_TYPES: DeviceTypeDef[] = [
   {
     id: "elec-panel",
     label: "לוח חשמל",
+    notSold: true,
     layer: "power",
     icon: Zap,
     core: true,
@@ -413,8 +424,8 @@ export const DEVICE_TYPES: DeviceTypeDef[] = [
     network: true,
     fields: [],
   },
-  { id: "tv", label: "טלוויזיה / מסך", layer: "other", icon: Tv, network: true, fields: [] },
-  { id: "printer", label: "מדפסת", layer: "other", icon: Printer, network: true, fields: [] },
+  { id: "tv", label: "טלוויזיה / מסך", layer: "other", icon: Tv, network: true, notSold: true, fields: [] },
+  { id: "printer", label: "מדפסת", layer: "other", icon: Printer, network: true, notSold: true, fields: [] },
   { id: "generic", label: "ציוד כללי", layer: "other", icon: Cpu, network: true, creds: true, fields: [] },
 ];
 

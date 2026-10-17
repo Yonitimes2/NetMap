@@ -7,6 +7,7 @@ import { localImageBlob } from "./images";
 import { goToLogin, logout } from "./session-client";
 import { clearLocalData, useApp, type AppState } from "./store";
 import { toast } from "./toast";
+import type { Org } from "./types";
 
 /**
  * Keeps this browser's copy of the data in step with the server:
@@ -125,7 +126,8 @@ const isNetwork = (e: unknown) => !(e instanceof HttpError);
 // ---------- pull ----------
 
 interface SyncReply {
-  accounts: { id: string; rev: number; role: AccountRole }[];
+  orgs: Org[];
+  accounts: { id: string; rev: number; orgId: string | null; role: AccountRole }[];
   docs: { id: string; rev: number; doc: AccountDoc }[];
   removed: string[];
 }
@@ -159,7 +161,10 @@ async function doPull() {
     for (const id of gone) delete nextDirty[id];
     for (const a of reply.accounts) meta[a.id] = { rev: meta[a.id]?.rev ?? 0, role: a.role };
     for (const d of docs) meta[d.id] = { ...meta[d.id], rev: d.rev };
-    return { ...data, meta, dirty: nextDirty };
+    // the account each customer is in is the server's to say (copies cached before accounts don't have it)
+    const orgOf = new Map(reply.accounts.map((a) => [a.id, a.orgId ?? undefined]));
+    const accounts = data.accounts.map((a) => (orgOf.has(a.id) && orgOf.get(a.id) !== a.orgId ? { ...a, orgId: orgOf.get(a.id) } : a));
+    return { ...data, accounts, meta, dirty: nextDirty, orgs: reply.orgs };
   }, docs.length > 0 || reply.removed.length > 0);
   useSync.setState((st) => ({ ready: true, status: st.status === "loading" || st.status === "offline" ? "saved" : st.status }));
   if (Object.keys(useApp.getState().dirty).length) schedulePush(0);

@@ -14,6 +14,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useApp } from "@/lib/store";
+import { can, useRole } from "@/lib/access";
 import { storeImageFile, useImageSrc, deleteImage } from "@/lib/images";
 import { logAudit } from "@/lib/audit";
 import { toast } from "@/lib/toast";
@@ -32,7 +33,7 @@ import { camerasPrivacyHits } from "@/lib/space";
 import { rackOf } from "@/lib/rack-mount";
 import { DEFAULT_PPM } from "@/lib/space-catalog";
 import type { CableRun, Device, Link } from "@/lib/types";
-import { Button, Field, Input, Modal, Select, Textarea, cx } from "../ui";
+import { Button, Field, Input, Select, Textarea, cx } from "../ui";
 import { useEditor } from "./editor-store";
 import { PanelHeader, Section } from "./panel-ui";
 import { RackSection } from "./RackSection";
@@ -41,6 +42,7 @@ import { fovLimits } from "@/lib/products/client";
 import { CameraWizard } from "./CameraWizard";
 import { askConfirm } from "../dialogs";
 import { CodeScanner } from "../CodeScanner";
+import { ImageViewer } from "../ImageViewer";
 import { useCoarsePointer } from "@/lib/use-media";
 import { ObstaclePanel, OpeningPanel, RoomPanel, WallPanel } from "./StructurePanels";
 
@@ -80,6 +82,7 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
   const deleteDevice = useApp((s) => s.deleteDevice);
   const select = useEditor((s) => s.select);
   const aiming = useEditor((s) => s.aim === id);
+  const runsProject = can.runProject(useRole(accountId));
   // phones and tablets: the serial number can be scanned from the label
   const touch = useCoarsePointer();
   const [scanning, setScanning] = useState(false);
@@ -120,6 +123,22 @@ function DevicePanel({ id, accountId, canEdit, onGoto, onClose }: PanelProps & {
           </div>
         </div>
       </PanelHeader>
+
+      {(runsProject || d.existing) && (
+        <label className="flex items-center gap-2.5 border-b border-slate-100 px-4 py-2.5 text-sm">
+          <input
+            type="checkbox"
+            checked={!!d.existing}
+            disabled={ro || !runsProject}
+            onChange={(e) => upd({ existing: e.target.checked || undefined })}
+            className="size-4 shrink-0 accent-slate-900"
+          />
+          <span className="min-w-0 flex-1">
+            ציוד קיים אצל הלקוח
+            <span className="block text-xs text-slate-400">על המפה, אבל לא חלק מהפרויקט: לא בהצעה ולא ברכש</span>
+          </span>
+        </label>
+      )}
 
       <DeviceProductSection d={d} siteDevices={siteDevices} ro={ro} onChange={upd} />
 
@@ -709,27 +728,30 @@ function PhotosSection({ d, ro }: { d: Device; ro: boolean }) {
       <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => onFiles(e.target.files)} />
       <input ref={fileRef} type="file" accept="image/*" multiple hidden onChange={(e) => onFiles(e.target.files)} />
       {viewing && (
-        <Modal
+        <ImageViewer
+          srcs={d.photos}
+          index={Math.max(0, d.photos.indexOf(viewing))}
           title={d.label}
           onClose={() => setViewing(null)}
-          footer={
-            !ro && (
-              <Button
-                variant="danger"
-                size="sm"
-                onClick={() => {
-                  updateDevice(d.id, { photos: d.photos.filter((x) => x !== viewing) });
-                  void deleteImage(viewing);
-                  setViewing(null);
-                }}
-              >
-                <Trash2 size={14} /> מחק תמונה
-              </Button>
-            )
+          actions={
+            ro
+              ? undefined
+              : (src) => (
+                  <button
+                    onClick={async () => {
+                      // the question shows over the panel, so the full-screen picture closes first
+                      setViewing(null);
+                      if (!(await askConfirm({ title: "מחיקת תמונה", message: "למחוק את התמונה הזו?", danger: true, okLabel: "מחק" }))) return;
+                      updateDevice(d.id, { photos: useApp.getState().devices.find((x) => x.id === d.id)!.photos.filter((x) => x !== src) });
+                      void deleteImage(src);
+                    }}
+                    className="flex h-9 items-center gap-1.5 rounded-lg bg-white/15 px-3 text-sm text-red-200"
+                  >
+                    <Trash2 size={14} /> מחק תמונה
+                  </button>
+                )
           }
-        >
-          <FullImage src={viewing} />
-        </Modal>
+        />
       )}
     </Section>
   );
@@ -745,11 +767,6 @@ function Thumb({ src, onClick }: { src: string; onClick: () => void }) {
   );
 }
 
-function FullImage({ src }: { src: string }) {
-  const url = useImageSrc(src);
-  // eslint-disable-next-line @next/next/no-img-element
-  return url ? <img src={url} alt="" className="w-full rounded-lg" /> : null;
-}
 
 // ---------------------------------------------------------------- link
 

@@ -1,9 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Cloud, CloudOff, LoaderCircle, LogOut, MapPinned, Package, Settings, TriangleAlert, UserRound, Users } from "lucide-react";
+import { Building, ChevronLeft, ChevronRight, Cloud, CloudOff, LoaderCircle, LogOut, MapPinned, Package, Settings, TriangleAlert, UserRound, Users } from "lucide-react";
 import { useEffect, useState, type ReactNode } from "react";
-import { useHydrated } from "@/lib/store";
+import { useApp, useHydrated } from "@/lib/store";
 import { DialogHost } from "./dialogs";
 import { useUndoShortcuts } from "@/lib/history";
 import { useToast } from "@/lib/toast";
@@ -124,6 +124,8 @@ function SyncBadge() {
 function UserMenu() {
   const [open, setOpen] = useState(false);
   const me = useSession((s) => s.user);
+  // the account the user owns (its settings: name and people)
+  const ownOrg = useApp((s) => s.orgs.find((o) => o.role === "owner"));
   return (
     <div className="relative">
       <button onClick={() => setOpen((o) => !o)} className="flex h-9 items-center gap-2 rounded-lg px-2 text-sm hover:bg-slate-100">
@@ -143,8 +145,16 @@ function UserMenu() {
             <Link href="/me" onClick={() => setOpen(false)} className="mt-1 flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-slate-50">
               <Settings size={15} className="text-slate-400" /> החשבון שלי: אימייל וסיסמה
             </Link>
+            {ownOrg && (
+              <Link href={`/o/${ownOrg.id}`} onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-slate-50">
+                <Building size={15} className="text-slate-400" /> הגדרות החשבון: {ownOrg.name}
+              </Link>
+            )}
             {me.role === "admin" && (
               <>
+                <Link href="/admin/orgs" onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-slate-50">
+                  <Building size={15} className="text-slate-400" /> ניהול חשבונות
+                </Link>
                 <Link href="/admin/users" onClick={() => setOpen(false)} className="flex items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-slate-50">
                   <Users size={15} className="text-slate-400" /> ניהול משתמשים
                 </Link>

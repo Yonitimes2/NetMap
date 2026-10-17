@@ -129,8 +129,9 @@ export function techTiles(category: CatalogCategory, p: ProductParams): Tile[] {
   } else if (category === "nvr") {
     if (p.channels) t.push({ value: String(p.channels), label: "ערוצים" });
     if (p.maxRecordMp) t.push({ value: `${p.maxRecordMp}MP`, label: "הקלטה" });
-    if (p.hddBays) t.push({ value: String(p.hddBays), label: "דיסקים" });
-    if (p.maxHddTb) t.push({ value: `${p.maxHddTb}TB`, label: "נפח" });
+    if (p.includedTb !== undefined) t.push({ value: p.includedTb ? `${p.includedTb}TB` : "אין", label: "דיסק כלול" });
+    if (p.hddBays) t.push({ value: String(p.hddBays), label: "מקומות לדיסק" });
+    if (p.maxHddTb) t.push({ value: `${p.maxHddTb}TB`, label: "נפח מקסימלי" });
     if (p.incomingMbps) t.push({ value: String(p.incomingMbps), label: "Mbps" });
     if (p.poePorts) t.push({ value: String(p.poePorts), label: "PoE" });
   } else if (category === "switch") {

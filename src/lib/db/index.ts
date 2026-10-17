@@ -1,4 +1,5 @@
 import mysql from "mysql2/promise";
+import { randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { dataDir } from "../server-keys";
@@ -201,7 +202,88 @@ const STEPS: string[][] = [
       ADD COLUMN cost_at DATETIME(3) NULL`,
     `ALTER TABLE brands ADD COLUMN markup_pct DECIMAL(5,1) NULL`,
   ],
+  // 5: accounts (the installer's business, a tenant) above the customers ("accounts" rows): their
+  // own users, and their own costs and markups (the catalog itself stays shared)
+  [
+    `CREATE TABLE orgs (
+      id VARCHAR(40) NOT NULL PRIMARY KEY,
+      name VARCHAR(200) NOT NULL,
+      created_at DATETIME(3) NOT NULL,
+      updated_at DATETIME(3) NOT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    // owner: everything, prices and money included; technician: every customer and project, no money
+    `CREATE TABLE org_members (
+      org_id VARCHAR(40) NOT NULL,
+      user_id CHAR(36) NOT NULL,
+      role ENUM('owner','technician') NOT NULL,
+      created_at DATETIME(3) NOT NULL,
+      PRIMARY KEY (org_id, user_id),
+      KEY by_user (user_id),
+      FOREIGN KEY (org_id) REFERENCES orgs(id) ON DELETE CASCADE,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `ALTER TABLE accounts ADD COLUMN org_id VARCHAR(40) NULL, ADD KEY by_org (org_id), ADD FOREIGN KEY (org_id) REFERENCES orgs(id)`,
+    `CREATE TABLE org_prices (
+      org_id VARCHAR(40) NOT NULL,
+      product_id CHAR(16) NOT NULL,
+      cost DECIMAL(10,2) NULL,
+      cost_note VARCHAR(120) NULL,
+      cost_source VARCHAR(160) NULL,
+      cost_at DATETIME(3) NULL,
+      PRIMARY KEY (org_id, product_id),
+      KEY by_product (product_id),
+      FOREIGN KEY (org_id) REFERENCES orgs(id) ON DELETE CASCADE,
+      FOREIGN KEY (product_id) REFERENCES catalog_products(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE org_markups (
+      org_id VARCHAR(40) NOT NULL,
+      brand_id VARCHAR(40) NOT NULL,
+      markup_pct DECIMAL(5,1) NOT NULL,
+      PRIMARY KEY (org_id, brand_id),
+      FOREIGN KEY (org_id) REFERENCES orgs(id) ON DELETE CASCADE,
+      FOREIGN KEY (brand_id) REFERENCES brands(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  ],
+  // 6: quotes — each project's prices and changes (the account owners' alone, never in the customer's
+  // doc), the account's defaults for new quotes, and the links customers open the quote with
+  [
+    `ALTER TABLE orgs ADD COLUMN quote_defaults JSON NULL`,
+    `CREATE TABLE project_finance (
+      site_id VARCHAR(40) NOT NULL PRIMARY KEY,
+      account_id VARCHAR(40) NOT NULL,
+      doc JSON NOT NULL,
+      updated_at DATETIME(3) NOT NULL,
+      updated_by CHAR(36) NULL,
+      KEY by_account (account_id),
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+    `CREATE TABLE share_links (
+      id CHAR(12) NOT NULL PRIMARY KEY,
+      token CHAR(32) NOT NULL UNIQUE,
+      account_id VARCHAR(40) NOT NULL,
+      site_id VARCHAR(40) NOT NULL,
+      show_prices TINYINT(1) NOT NULL,
+      expires_at DATETIME(3) NULL,
+      revoked_at DATETIME(3) NULL,
+      views INT NOT NULL DEFAULT 0,
+      last_view_at DATETIME(3) NULL,
+      created_at DATETIME(3) NOT NULL,
+      created_by CHAR(36) NULL,
+      KEY by_site (site_id),
+      FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
+  ],
+  // 7: a quote's version, counted on each save (the owner and the customer see it was updated)
+  [`ALTER TABLE project_finance ADD COLUMN rev INT NOT NULL DEFAULT 1`],
+  // 8: files only the account's owners may open (a supplier's receipt), not everyone with access to the customer
+  [`ALTER TABLE files ADD COLUMN private TINYINT(1) NOT NULL DEFAULT 0`],
 ];
+
+/** Data moves that go with a schema step, run before the step counts as done. */
+const AFTER_STEP: Record<number, (c: Conn) => Promise<void>> = {
+  1: importUsersFile,
+  5: firstOrg,
+};
 
 async function migrate(p: mysql.Pool) {
   const c = await p.getConnection();
@@ -214,13 +296,37 @@ async function migrate(p: mysql.Pool) {
     if (!rows.length) await c.query("INSERT INTO schema_version (v) VALUES (0)");
     for (; v < STEPS.length; v++) {
       for (const sql of STEPS[v]) await c.query(sql);
+      await AFTER_STEP[v + 1]?.(c);
       await c.query("UPDATE schema_version SET v = ?", [v + 1]);
-      if (v === 0) await importUsersFile(c);
     }
   } finally {
     await c.query("SELECT RELEASE_LOCK('netmap_migrate')").catch(() => {});
     c.release();
   }
+}
+
+/**
+ * Before accounts, every business was the system admins' customer: they all go into one account,
+ * owned by the system admins, with the costs and markups imported until now. Its name is set later
+ * on the account's settings page.
+ */
+async function firstOrg(c: Conn) {
+  const [orgs] = await c.query<Row[]>("SELECT id FROM orgs LIMIT 1");
+  if (orgs.length) return;
+  const [customers] = await c.query<Row[]>("SELECT id FROM accounts LIMIT 1");
+  const [admins] = await c.query<Row[]>("SELECT id FROM users WHERE role = 'admin'");
+  if (!customers.length && !admins.length) return; // a new installation: accounts are opened from the admin page
+  const id = randomBytes(9).toString("base64url");
+  const now = new Date();
+  await c.query("INSERT INTO orgs (id, name, created_at, updated_at) VALUES (?, ?, ?, ?)", [id, "העסק שלי", now, now]);
+  await c.query("UPDATE accounts SET org_id = ?", [id]);
+  for (const a of admins) await c.query("INSERT INTO org_members (org_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)", [id, a.id, now]);
+  await c.query(
+    `INSERT INTO org_prices (org_id, product_id, cost, cost_note, cost_source, cost_at)
+      SELECT ?, id, cost, cost_note, cost_source, cost_at FROM catalog_products WHERE cost IS NOT NULL OR cost_note IS NOT NULL`,
+    [id],
+  );
+  await c.query("INSERT INTO org_markups (org_id, brand_id, markup_pct) SELECT ?, id, markup_pct FROM brands WHERE markup_pct IS NOT NULL", [id]);
 }
 
 /** Sign-in users from before the database (users.json in the data dir) move into the users table once. */

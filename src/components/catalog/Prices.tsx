@@ -1,24 +1,46 @@
 "use client";
 
 import { cx } from "../ui";
-import { DEFAULT_MARKUP, VAT, customerPrice, nis, priceListName } from "@/lib/products/pricing";
+import { DEFAULT_MARKUP, customerPrice, nis, priceListName, withVat } from "@/lib/products/pricing";
 import type { ProductFull, ProductSummary } from "@/lib/products/types";
 
 /**
- * The cost on a product card. Only the account holder ever has prices (the server removes them
- * for everyone else), so for anyone else this shows nothing.
+ * Prices on a product card, with VAT: the customer's price, then the cost, then the profit (before
+ * VAT, which isn't income). Only the account's owners have prices (the server removes them for
+ * everyone else), so for anyone else this shows nothing.
  */
-export function CostTag({ p, className }: { p: Pick<ProductSummary, "cost" | "costNote">; className?: string }) {
-  if (p.cost === undefined && !p.costNote) return null;
+export function CostTag({
+  p,
+  className,
+  hideDisk,
+}: {
+  p: Pick<ProductSummary, "cost" | "costNote" | "msrp" | "markupPct">;
+  className?: string;
+  /** a recorder's disk is shown on its own next to it */
+  hideDisk?: boolean;
+}) {
+  const note = hideDisk && p.costNote?.startsWith("כולל דיסק") ? undefined : p.costNote;
+  const offer = customerPrice(p, p.markupPct ?? DEFAULT_MARKUP);
+  if (p.cost === undefined && !p.costNote && !offer) return null;
+  const profit = offer && p.cost !== undefined ? offer.net - p.cost : undefined;
   return (
     <span className={cx("inline-block text-[11px] text-slate-500", className)}>
+      {offer && (
+        <>
+          ללקוח <b className="font-semibold text-slate-900">{nis(withVat(offer.net))}</b>
+          {" · "}
+        </>
+      )}
       {p.cost !== undefined ? (
         <>
-          עלות <b className="font-semibold text-slate-700">{nis(p.cost)}</b> + מע״מ{p.costNote ? ` · ${p.costNote}` : ""}
+          עלות <b className="font-semibold text-slate-700">{nis(withVat(p.cost))}</b>
         </>
       ) : (
-        `מחיר: ${p.costNote}`
+        `עלות: ${p.costNote ?? "לא ידועה"}`
       )}
+      {profit !== undefined && <span className={profit < 0 ? "text-red-600" : "text-green-700"}> (רווח {nis(profit)} נטו)</span>}
+      {" · כולל מע״מ"}
+      {p.cost !== undefined && note ? ` · ${note}` : ""}
     </span>
   );
 }
@@ -47,23 +69,32 @@ export function PricesSection({ product }: { product: ProductFull }) {
         מחירים <span className="text-xs font-normal text-slate-400">· רק לבעל החשבון</span>
       </h2>
       <div className="divide-y divide-slate-100 text-sm">
-        <Line
-          label="עלות"
-          value={cost !== undefined ? `${nis(cost)} + מע״מ` : (costNote ?? "אין במחירון")}
-          sub={[cost !== undefined ? costNote : undefined, product.costSource && priceListName(product.costSource), product.costAt && new Date(product.costAt).toLocaleDateString("he-IL")].filter(Boolean).join(" · ")}
-        />
-        {msrp !== undefined && <Line label="מחיר לצרכן באתר היצרן" value={`${nis(msrp)} כולל מע״מ`} />}
         {offer && (
           <Line
-            label="מחיר מוצע ללקוח"
+            label="מחיר ללקוח"
             strong
-            value={`${nis(offer.net)} + מע״מ`}
-            sub={`${nis(offer.net * (1 + VAT))} כולל מע״מ · ${
+            value={`${nis(withVat(offer.net))} כולל מע״מ`}
+            sub={`${nis(offer.net)} לפני מע״מ · ${
               offer.source === "site" ? "לפי המחיר באתר היצרן" : `${offer.siteBelowCost ? "המחיר באתר נמוך מהעלות, לכן " : "הערכה: "}עלות + ${markup}%`
             }`}
           />
         )}
-        {margin !== undefined && cost && <Line label="רווח" value={`${nis(margin)} (${Math.round((margin / cost) * 100)}%)`} />}
+        <Line
+          label="עלות"
+          value={cost !== undefined ? `${nis(withVat(cost))} כולל מע״מ` : (costNote ?? "אין במחירון")}
+          sub={[
+            cost !== undefined && `${nis(cost)} לפני מע״מ`,
+            cost !== undefined && costNote,
+            product.costSource && priceListName(product.costSource),
+            product.costAt && new Date(product.costAt).toLocaleDateString("he-IL"),
+          ]
+            .filter(Boolean)
+            .join(" · ")}
+        />
+        {margin !== undefined && cost ? (
+          <Line label="רווח" value={`${nis(margin)} (${Math.round((margin / cost) * 100)}% על העלות)`} sub="נטו: בלי המע״מ, שעובר למס" />
+        ) : null}
+        {msrp !== undefined && <Line label="מחיר לצרכן באתר היצרן" value={`${nis(msrp)} כולל מע״מ`} />}
       </div>
     </section>
   );

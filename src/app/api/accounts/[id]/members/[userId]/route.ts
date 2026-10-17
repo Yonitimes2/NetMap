@@ -4,18 +4,18 @@ import { canManageUsers, listMembers, removeMember, roleIn, setMember } from "@/
 type Ctx = RouteContext<"/api/accounts/[id]/members/[userId]">;
 
 /**
- * Checks shared by both handlers. A business admin can't take away the last admin role in their
- * own business (they'd lock themselves out); system admins can.
+ * Checks shared by both handlers. A business owner can't take away the last business-owner role in
+ * their own business (they'd lock themselves out); the account's owners and system admins can.
  */
 async function guard(ctx: Ctx, leavesAdmin: (members: Awaited<ReturnType<typeof listMembers>>) => boolean) {
   const auth = await requireUser();
   if ("error" in auth) return { error: auth.error };
   const { id, userId } = await ctx.params;
   const role = await roleIn(auth.user, id);
-  if (!canManageUsers(role)) return { error: jsonError(403, "forbidden", "אין לך הרשאה לנהל את המשתמשים של העסק הזה") };
+  if (!canManageUsers(role)) return { error: jsonError(403, "forbidden", "אין לך הרשאה לנהל את המשתמשים של הלקוח הזה") };
   const members = await listMembers(id);
-  if (!members.some((m) => m.userId === userId)) return { error: jsonError(404, "not_found", "המשתמש לא נמצא בעסק") };
-  if (role !== "super" && !leavesAdmin(members)) return { error: jsonError(409, "last_admin", "חייב להישאר לפחות מנהל אחד בעסק") };
+  if (!members.some((m) => m.userId === userId)) return { error: jsonError(404, "not_found", "המשתמש לא נמצא אצל הלקוח") };
+  if (role === "admin" && !leavesAdmin(members)) return { error: jsonError(409, "last_admin", "חייב להישאר לפחות מנהל אחד בעסק") };
   return { id, userId };
 }
 

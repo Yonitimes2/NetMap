@@ -5,7 +5,11 @@ import type { AccountDoc, AccountRole } from "../account-doc";
 import type { AuthUser } from "../auth/users";
 import type { Device, Role } from "../types";
 
-/** Business accounts: one row per account holding its whole doc, plus memberships and the audit log. */
+/**
+ * Customers (the "accounts" table, named before there were accounts above them): one row per
+ * customer holding its whole doc and the account it belongs to (org_id), plus the people given
+ * access to just this customer (memberships) and the audit log.
+ */
 
 // ---------- equipment passwords: encrypted inside the stored doc ----------
 
@@ -48,48 +52,68 @@ async function openDoc(stored: AccountDoc & { devices: StoredDevice[] }): Promis
 
 // ---------- access ----------
 
-/** The user's role in an account, or null without access. System admins are "super" everywhere. */
-export async function roleIn(user: AuthUser, accountId: string): Promise<AccountRole | null> {
+/** People of the customer's account come first, then system admins, then people given access to just this customer. */
+function pickRole(user: AuthUser, orgRole: string | null, customerRole: Role | null): AccountRole | null {
+  if (orgRole) return orgRole === "owner" ? "owner" : "technician";
   if (user.role === "admin") return "super";
-  const [rows] = await (await db()).query<Row[]>("SELECT role FROM memberships WHERE account_id = ? AND user_id = ?", [accountId, user.id]);
-  return (rows[0]?.role as Role | undefined) ?? null;
+  return customerRole;
 }
 
-export const canManageUsers = (r: AccountRole | null) => r === "admin" || r === "super";
-
-/** Accounts the user can see, with the current revision and the user's role. */
-export async function visibleAccounts(user: AuthUser): Promise<{ id: string; rev: number; role: AccountRole }[]> {
-  const conn = await db();
-  if (user.role === "admin") {
-    const [rows] = await conn.query<Row[]>("SELECT id, rev FROM accounts ORDER BY created_at");
-    return rows.map((r) => ({ id: r.id, rev: r.rev, role: "super" as const }));
-  }
-  const [rows] = await conn.query<Row[]>(
-    "SELECT a.id, a.rev, m.role FROM accounts a JOIN memberships m ON m.account_id = a.id WHERE m.user_id = ? ORDER BY a.created_at",
-    [user.id],
+/** The user's role in a customer, or null without access. */
+export async function roleIn(user: AuthUser, accountId: string): Promise<AccountRole | null> {
+  const [rows] = await (await db()).query<Row[]>(
+    `SELECT om.role AS org_role, m.role AS customer_role FROM accounts a
+      LEFT JOIN org_members om ON om.org_id = a.org_id AND om.user_id = ?
+      LEFT JOIN memberships m ON m.account_id = a.id AND m.user_id = ?
+      WHERE a.id = ?`,
+    [user.id, user.id, accountId],
   );
-  return rows.map((r) => ({ id: r.id, rev: r.rev, role: r.role }));
+  if (!rows[0]) return user.role === "admin" ? "super" : null;
+  return pickRole(user, rows[0].org_role, rows[0].customer_role);
+}
+
+/** Who manages the people given access to a customer: the account's owners, the customer's own business owner, system admins. */
+export const canManageUsers = (r: AccountRole | null) => r === "owner" || r === "admin" || r === "super";
+
+/** Customers the user can see, with the current revision, the account they're in and the user's role. */
+export async function visibleAccounts(user: AuthUser): Promise<{ id: string; rev: number; orgId: string | null; role: AccountRole }[]> {
+  const [rows] = await (await db()).query<Row[]>(
+    `SELECT a.id, a.rev, a.org_id, om.role AS org_role, m.role AS customer_role FROM accounts a
+      LEFT JOIN org_members om ON om.org_id = a.org_id AND om.user_id = ?
+      LEFT JOIN memberships m ON m.account_id = a.id AND m.user_id = ?
+      ${user.role === "admin" ? "" : "WHERE om.user_id IS NOT NULL OR m.user_id IS NOT NULL"}
+      ORDER BY a.created_at`,
+    [user.id, user.id],
+  );
+  return rows.map((r) => ({ id: r.id, rev: r.rev, orgId: r.org_id, role: pickRole(user, r.org_role, r.customer_role)! }));
 }
 
 export async function loadDocs(ids: string[]): Promise<{ id: string; rev: number; doc: AccountDoc }[]> {
   if (!ids.length) return [];
-  const [rows] = await (await db()).query<Row[]>("SELECT id, rev, doc FROM accounts WHERE id IN (?)", [ids]);
-  return Promise.all(rows.map(async (r) => ({ id: r.id, rev: r.rev, doc: await openDoc(r.doc) })));
+  const [rows] = await (await db()).query<Row[]>("SELECT id, rev, org_id, doc FROM accounts WHERE id IN (?)", [ids]);
+  return Promise.all(
+    rows.map(async (r) => {
+      const doc = await openDoc(r.doc);
+      // the server's record of the account it's in is the one that counts
+      return { id: r.id, rev: r.rev, doc: { ...doc, account: { ...doc.account, orgId: r.org_id ?? undefined } } };
+    }),
+  );
 }
 
 /**
- * Stores an account's doc. Creates the account when it doesn't exist yet (callers check that only
- * system admins may do that). The last save wins: `overwritten` tells the caller that someone else
- * saved since `baseRev`.
+ * Stores a customer's doc. Creates the customer, in the account its doc names, when it doesn't exist
+ * yet (callers check that the user works in that account). A customer never moves to another account.
+ * The last save wins: `overwritten` tells the caller that someone else saved since `baseRev`.
  */
 export async function saveDoc(user: AuthUser, id: string, baseRev: number, doc: AccountDoc) {
-  const sealed = JSON.stringify(await sealDoc(doc));
   return tx(async (c) => {
-    const [rows] = await c.query<Row[]>("SELECT rev FROM accounts WHERE id = ? FOR UPDATE", [id]);
+    const [rows] = await c.query<Row[]>("SELECT rev, org_id FROM accounts WHERE id = ? FOR UPDATE", [id]);
     const now = new Date();
     if (!rows.length) {
-      await c.query("INSERT INTO accounts (id, name, rev, doc, created_at, updated_at, updated_by) VALUES (?, ?, 1, ?, ?, ?, ?)", [
+      const sealed = JSON.stringify(await sealDoc(doc));
+      await c.query("INSERT INTO accounts (id, org_id, name, rev, doc, created_at, updated_at, updated_by) VALUES (?, ?, ?, 1, ?, ?, ?, ?)", [
         id,
+        doc.account.orgId,
         doc.account.name,
         sealed,
         new Date(doc.account.createdAt || now),
@@ -98,6 +122,7 @@ export async function saveDoc(user: AuthUser, id: string, baseRev: number, doc: 
       ]);
       return { rev: 1, overwritten: false, created: true };
     }
+    const sealed = JSON.stringify(await sealDoc({ ...doc, account: { ...doc.account, orgId: rows[0].org_id ?? undefined } }));
     const rev = rows[0].rev + 1;
     await c.query("UPDATE accounts SET name = ?, rev = ?, doc = ?, updated_at = ?, updated_by = ? WHERE id = ?", [doc.account.name, rev, sealed, now, user.id, id]);
     return { rev, overwritten: rows[0].rev !== baseRev, created: false };

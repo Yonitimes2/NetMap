@@ -171,7 +171,8 @@ const ipWater = (r?: string) => {
 /** How far a camera shows the purpose's detail through a given angle. */
 const reachM = (pixels: number, fovDeg: number, purposePpm: number) => pixels / (purposePpm * sceneWidth(fovDeg, 1));
 
-function evaluate(p: ProductSummary, n: CameraNeeds): Suggestion | null {
+/** How one catalog camera does at one spot (null: the catalog lacks the data to tell). */
+export function evaluateCamera(p: ProductSummary, n: CameraNeeds): Suggestion | null {
   const s = p.params;
   const pixels = horizontalPixels(s);
   if (!pixels || !s.fovDeg) return null;
@@ -292,7 +293,7 @@ function evaluate(p: ProductSummary, n: CameraNeeds): Suggestion | null {
 export function suggestCameras(products: ProductSummary[], n: CameraNeeds): SuggestResult {
   const all = products
     .filter((p) => CAMERA_CATEGORIES.includes(p.category) && p.status !== "discontinued" && (p.category !== "solar" || n.noPower))
-    .map((p) => evaluate(p, n))
+    .map((p) => evaluateCamera(p, n))
     .filter((x): x is Suggestion => !!x)
     // equally good cameras: the cheaper first, where both have a cost from the price list
     .sort((a, b) => a.tier - b.tier || (a.p.cost !== undefined && b.p.cost !== undefined ? a.p.cost - b.p.cost : a.rank - b.rank));

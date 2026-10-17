@@ -93,10 +93,15 @@ function UploadModal({ data, pending, onClose, onDone }: { data: DataState; pend
     const ids = [...picked];
     // adding them to the store marks them as changed, so sync.ts saves each one on the server
     useApp.setState((s) => {
+      // they become customers of the admin's (first) account
+      const org = s.orgs.find((o) => o.role === "owner") ?? s.orgs[0];
       let next: DataState = s;
-      for (const id of ids) next = replaceAccount(next, id, docOf(data, id));
+      for (const id of ids) {
+        const doc = docOf(data, id)!;
+        next = replaceAccount(next, id, { ...doc, account: { ...doc.account, orgId: org?.id } });
+      }
       const meta = { ...s.meta };
-      for (const id of ids) meta[id] = { rev: 0, role: "super" };
+      for (const id of ids) meta[id] = { rev: 0, role: org?.role ?? "super" };
       return { ...next, meta };
     });
     onDone(ids);

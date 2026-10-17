@@ -33,11 +33,12 @@ type ProductRow = Row & {
   page_url: string | null;
   datasheet_url: string | null;
   msrp: string | null;
-  cost: string | null;
-  cost_note: string | null;
-  cost_source: string | null;
-  cost_at: Date | null;
-  markup_pct: string | null;
+  // the account's own (see priceJoin)
+  org_cost: string | null;
+  org_cost_note: string | null;
+  org_cost_source: string | null;
+  org_cost_at: Date | null;
+  org_markup_pct: string | null;
   status: ProductFull["status"];
   source_hash: string | null;
   fetched_at: Date | null;
@@ -56,9 +57,10 @@ const summary = (r: ProductRow): ProductSummary => ({
   imageId: r.images[0],
   boxIcons: r.box_icons ?? [],
   status: r.status,
-  cost: r.cost === null ? undefined : Number(r.cost),
-  costNote: r.cost_note ?? undefined,
+  cost: r.org_cost === null ? undefined : Number(r.org_cost),
+  costNote: r.org_cost_note ?? undefined,
   msrp: r.msrp === null ? undefined : Number(r.msrp),
+  markupPct: r.org_markup_pct === null ? DEFAULT_MARKUP : Number(r.org_markup_pct),
 });
 
 const full = (r: ProductRow): ProductFull => ({
@@ -72,18 +74,29 @@ const full = (r: ProductRow): ProductFull => ({
   features: r.features,
   pageUrl: r.page_url ?? undefined,
   datasheetUrl: r.datasheet_url ?? undefined,
-  costSource: r.cost_source ?? undefined,
-  costAt: r.cost_at?.getTime(),
-  markupPct: r.markup_pct === null ? DEFAULT_MARKUP : Number(r.markup_pct),
+  costSource: r.org_cost_source ?? undefined,
+  costAt: r.org_cost_at?.getTime(),
+  markupPct: r.org_markup_pct === null ? DEFAULT_MARKUP : Number(r.org_markup_pct),
   fetchedAt: r.fetched_at?.getTime(),
   updatedAt: r.updated_at.getTime(),
 });
 
-const SELECT = "SELECT p.*, b.name AS brand_name, b.markup_pct FROM catalog_products p JOIN brands b ON b.id = p.brand_id";
+/**
+ * Products with one account's costs and markups. Costs are each account's own (from its price
+ * lists); without an account (orgId null) the product comes without them.
+ */
+const SELECT = `SELECT p.*, b.name AS brand_name,
+    op.cost AS org_cost, op.cost_note AS org_cost_note, op.cost_source AS org_cost_source, op.cost_at AS org_cost_at, om.markup_pct AS org_markup_pct
+  FROM catalog_products p JOIN brands b ON b.id = p.brand_id
+  LEFT JOIN org_prices op ON op.product_id = p.id AND op.org_id = ?
+  LEFT JOIN org_markups om ON om.brand_id = p.brand_id AND om.org_id = ?`;
 
-export async function listProducts(filter: { brandId?: string; category?: string; q?: string; includeInactive?: boolean } = {}): Promise<ProductSummary[]> {
+export async function listProducts(
+  filter: { brandId?: string; category?: string; q?: string; includeInactive?: boolean } = {},
+  orgId: string | null = null,
+): Promise<ProductSummary[]> {
   const where: string[] = [];
-  const args: unknown[] = [];
+  const args: unknown[] = [orgId, orgId];
   if (filter.brandId) {
     where.push("p.brand_id = ?");
     args.push(filter.brandId);
@@ -101,13 +114,13 @@ export async function listProducts(filter: { brandId?: string; category?: string
   return rows.map(summary);
 }
 
-export async function getProduct(id: string): Promise<ProductFull | null> {
-  const [rows] = await (await db()).query<ProductRow[]>(`${SELECT} WHERE p.id = ?`, [id]);
+export async function getProduct(id: string, orgId: string | null = null): Promise<ProductFull | null> {
+  const [rows] = await (await db()).query<ProductRow[]>(`${SELECT} WHERE p.id = ?`, [orgId, orgId, id]);
   return rows[0] ? full(rows[0]) : null;
 }
 
 export async function getProductByModel(brandId: string, model: string) {
-  const [rows] = await (await db()).query<ProductRow[]>(`${SELECT} WHERE p.brand_id = ? AND p.model = ?`, [brandId, model]);
+  const [rows] = await (await db()).query<ProductRow[]>(`${SELECT} WHERE p.brand_id = ? AND p.model = ?`, [null, null, brandId, model]);
   return rows[0] ?? null;
 }
 
@@ -267,7 +280,11 @@ export async function catalogImage(id: string, width?: number): Promise<{ bytes:
 }
 
 /** The admin's changes to a product. Parameter values set to null go back to the source value. */
-export async function updateProduct(id: string, patch: { overrides?: Record<string, unknown>; deviceType?: string; category?: CatalogCategory; status?: ProductFull["status"] }) {
+export async function updateProduct(
+  id: string,
+  patch: { overrides?: Record<string, unknown>; deviceType?: string; category?: CatalogCategory; status?: ProductFull["status"] },
+  orgId: string | null = null,
+) {
   const conn = await db();
   const cur = await getProduct(id);
   if (!cur) return null;
@@ -295,7 +312,7 @@ export async function updateProduct(id: string, patch: { overrides?: Record<stri
     args.push(patch.status);
   }
   await conn.query(`UPDATE catalog_products SET ${sets.join(", ")} WHERE id = ?`, [...args, id]);
-  return getProduct(id);
+  return getProduct(id, orgId);
 }
 
 /** Products of a brand the latest full listing no longer shows. */
@@ -343,8 +360,12 @@ export async function recentRuns(brandId: string, limit = 5) {
   }));
 }
 
-export async function listBrands() {
-  const [rows] = await (await db()).query<Row[]>("SELECT id, name, website, sources, markup_pct FROM brands ORDER BY name");
+/** The brands, with one account's markup on each (the default without one). */
+export async function listBrands(orgId: string | null = null) {
+  const [rows] = await (await db()).query<Row[]>(
+    "SELECT b.id, b.name, b.website, b.sources, om.markup_pct FROM brands b LEFT JOIN org_markups om ON om.brand_id = b.id AND om.org_id = ? ORDER BY b.name",
+    [orgId],
+  );
   return rows.map((r) => ({
     id: r.id as string,
     name: r.name as string,
@@ -354,25 +375,31 @@ export async function listBrands() {
   }));
 }
 
-// ---------- prices ----------
+// ---------- prices (each account's own) ----------
 
-/** The price list the brand's costs are from now: its name, when it was read, how many products have a price. */
-export async function priceListInfo(brandId: string): Promise<{ source: string; at: number; priced: number } | null> {
+/** The price list the account's costs for a brand are from now: its name, when it was read, how many products have a price. */
+export async function priceListInfo(orgId: string, brandId: string): Promise<{ source: string; at: number; priced: number } | null> {
   const [rows] = await (await db()).query<Row[]>(
-    "SELECT cost_source, MAX(cost_at) AS at, COUNT(cost) AS priced FROM catalog_products WHERE brand_id = ? AND cost_source IS NOT NULL GROUP BY cost_source ORDER BY at DESC LIMIT 1",
-    [brandId],
+    `SELECT op.cost_source, MAX(op.cost_at) AS at, COUNT(op.cost) AS priced FROM org_prices op JOIN catalog_products p ON p.id = op.product_id
+      WHERE op.org_id = ? AND p.brand_id = ? AND op.cost_source IS NOT NULL GROUP BY op.cost_source ORDER BY at DESC LIMIT 1`,
+    [orgId, brandId],
   );
   const r = rows[0];
   return r ? { source: r.cost_source as string, at: (r.at as Date).getTime(), priced: Number(r.priced) } : null;
 }
 
 /**
- * A distributor's price list for a brand: each line matched to a catalog product. Saving replaces
- * the brand's costs (a product the new list doesn't have loses its old cost). `dryRun` only reports.
+ * A distributor's price list for a brand, for one account: each line matched to a catalog product.
+ * Saving replaces the account's costs for the brand (a product the new list doesn't have loses its
+ * old cost). `dryRun` only reports.
  */
-export async function applyPriceList(brandId: string, source: string, rows: PriceRow[], dryRun: boolean) {
+export async function applyPriceList(orgId: string, brandId: string, source: string, rows: PriceRow[], dryRun: boolean) {
   const conn = await db();
-  const [products] = await conn.query<Row[]>("SELECT id, model, cost FROM catalog_products WHERE brand_id = ? AND status <> 'discontinued'", [brandId]);
+  const [products] = await conn.query<Row[]>(
+    `SELECT p.id, p.model, op.cost FROM catalog_products p LEFT JOIN org_prices op ON op.product_id = p.id AND op.org_id = ?
+      WHERE p.brand_id = ? AND p.status <> 'discontinued'`,
+    [orgId, brandId],
+  );
   const { matches, unmatched } = matchPriceRows(products as { id: string; model: string }[], rows);
   const priced = new Set(matches.filter((m) => m.price !== undefined).map((m) => m.productId));
   const stats = {
@@ -389,9 +416,16 @@ export async function applyPriceList(brandId: string, source: string, rows: Pric
   try {
     await c.beginTransaction();
     const now = new Date();
-    await c.query("UPDATE catalog_products SET cost = NULL, cost_note = NULL, cost_source = NULL, cost_at = NULL WHERE brand_id = ?", [brandId]);
+    await c.query("DELETE op FROM org_prices op JOIN catalog_products p ON p.id = op.product_id WHERE op.org_id = ? AND p.brand_id = ?", [orgId, brandId]);
     for (const m of matches) {
-      await c.query("UPDATE catalog_products SET cost = ?, cost_note = ?, cost_source = ?, cost_at = ? WHERE id = ?", [m.price ?? null, m.note ?? null, source, now, m.productId]);
+      await c.query("INSERT INTO org_prices (org_id, product_id, cost, cost_note, cost_source, cost_at) VALUES (?, ?, ?, ?, ?, ?)", [
+        orgId,
+        m.productId,
+        m.price ?? null,
+        m.note ?? null,
+        source,
+        now,
+      ]);
     }
     await c.commit();
   } catch (e) {
@@ -403,6 +437,9 @@ export async function applyPriceList(brandId: string, source: string, rows: Pric
   return stats;
 }
 
-export async function setMarkup(brandId: string, pct: number) {
-  await (await db()).query("UPDATE brands SET markup_pct = ? WHERE id = ?", [pct, brandId]);
+export async function setMarkup(orgId: string, brandId: string, pct: number) {
+  await (await db()).query(
+    "INSERT INTO org_markups (org_id, brand_id, markup_pct) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE markup_pct = VALUES(markup_pct)",
+    [orgId, brandId, pct],
+  );
 }

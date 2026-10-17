@@ -66,6 +66,8 @@ export function CatalogScreen() {
 
 function Catalog() {
   const [brands, setBrands] = useState<BrandInfo[] | null>(null);
+  /** the account whose costs this admin sees and imports (the one they own); none: no prices */
+  const [priceOrg, setPriceOrg] = useState<{ id: string; name: string } | null>(null);
   const [progress, setProgress] = useState<Progress | null>(null);
   const [products, setProducts] = useState<ProductSummary[] | null>(null);
   const [category, setCategory] = useState<CatalogCategory | "all">("all");
@@ -80,10 +82,11 @@ function Catalog() {
   useEffect(() => {
     let alive = true;
     const load = () =>
-      authApi<{ brands: BrandInfo[]; progress: Progress | null }>("/api/admin/catalog", "GET")
+      authApi<{ brands: BrandInfo[]; progress: Progress | null; priceOrg: { id: string; name: string } | null }>("/api/admin/catalog", "GET")
         .then((r) => {
           if (!alive) return;
           setBrands(r.brands);
+          setPriceOrg(r.priceOrg);
           setProgress(r.progress);
         })
         .catch((e: Error) => alive && toast(e.message, "error"));
@@ -191,7 +194,7 @@ function Catalog() {
               </p>
             )}
             {mine?.phase === "error" && <p className="mt-2 text-xs text-red-700">העדכון נכשל: {mine.error}</p>}
-            <PriceList brand={b} onChanged={() => setReload((n) => n + 1)} />
+            {priceOrg && <PriceList brand={b} org={priceOrg} onChanged={() => setReload((n) => n + 1)} />}
           </div>
         );
       })}
@@ -244,7 +247,7 @@ function Catalog() {
 }
 
 /** The brand's price list (the distributor's Excel file) and its markup for a customer price. */
-function PriceList({ brand, onChanged }: { brand: BrandInfo; onChanged: () => void }) {
+function PriceList({ brand, org, onChanged }: { brand: BrandInfo; org: { name: string }; onChanged: () => void }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState<{ source: string; rows: PriceRow[]; stats: PriceStats } | null>(null);
@@ -297,6 +300,7 @@ function PriceList({ brand, onChanged }: { brand: BrandInfo; onChanged: () => vo
   return (
     <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-slate-100 pt-3">
       <div className="min-w-0 flex-1 text-xs text-slate-500">
+        <span className="block font-medium text-slate-600">המחירים של {org.name} (רק לבעלי החשבון)</span>
         {brand.priceList ? (
           <>
             <b className="text-slate-700">{priceListName(brand.priceList.source)}</b> · {new Date(brand.priceList.at).toLocaleDateString("he-IL")} · {brand.priceList.priced} מוצרים עם

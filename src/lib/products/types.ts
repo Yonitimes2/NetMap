@@ -73,7 +73,13 @@ export interface NvrParams {
   channels?: number;
   poePorts?: number;
   hddBays?: number;
+  /** the most it takes, all bays together */
   maxHddTb?: number;
+  /**
+   * the disk it comes with, in TB (0: none). Not the maker's: it's how the account buys it (the price
+   * list's line), set on a device when its model is chosen, and changed there if another disk goes in.
+   */
+  includedTb?: number;
   maxRecordMp?: number;
   incomingMbps?: number;
   raid?: boolean;
@@ -136,6 +142,8 @@ export interface ProductSummary {
   costNote?: string;
   /** retail price on the maker's site, with VAT */
   msrp?: number;
+  /** the account's markup on cost for this brand, for a customer price where the site has none */
+  markupPct?: number;
 }
 
 export interface ProductFull extends ProductSummary {
@@ -152,8 +160,6 @@ export interface ProductFull extends ProductSummary {
   /** the price list the cost is from, and when it was read */
   costSource?: string;
   costAt?: number;
-  /** the brand's markup on cost for a customer price (when the site has no retail price) */
-  markupPct?: number;
   fetchedAt?: number;
   updatedAt: number;
 }
@@ -216,7 +222,8 @@ export function paramChips(category: CatalogCategory, p: ProductParams): string[
   } else if (category === "nvr") {
     if (p.channels) out.push(`${p.channels} ערוצים`);
     if (p.poePorts) out.push(`${p.poePorts} PoE`);
-    if (p.hddBays) out.push(`${p.hddBays} דיסקים`);
+    if (p.includedTb !== undefined) out.push(p.includedTb ? `כולל דיסק ${p.includedTb}TB` : "בלי דיסק");
+    if (p.hddBays) out.push(`${p.hddBays} ${p.hddBays === 1 ? "מקום לדיסק" : "מקומות לדיסקים"}${p.maxHddTb ? ` עד ${p.maxHddTb}TB` : ""}`);
     if (p.maxRecordMp) out.push(`עד ${p.maxRecordMp}MP`);
     if (p.raid) out.push("RAID");
   } else if (category === "switch") {
@@ -317,6 +324,7 @@ export const PARAM_FIELDS: Record<CatalogCategory, ParamField[]> = {
   nvr: [
     { key: "channels", label: "ערוצים", kind: "number" },
     { key: "poePorts", label: "פורטי PoE", kind: "number" },
+    { key: "includedTb", label: "דיסק כלול", kind: "number", unit: "TB" },
     { key: "hddBays", label: "מקומות לדיסקים", kind: "number" },
     { key: "maxHddTb", label: "נפח מקסימלי", kind: "number", unit: "TB" },
     { key: "maxRecordMp", label: "הקלטה עד", kind: "number", unit: "MP" },

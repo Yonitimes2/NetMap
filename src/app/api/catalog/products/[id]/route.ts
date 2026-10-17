@@ -2,14 +2,16 @@ import { jsonError, readJson, requireUser } from "@/lib/auth/current-user";
 import { getProduct, updateProduct } from "@/lib/products/store";
 import { CATEGORY_LABEL, type CatalogCategory } from "@/lib/products/types";
 import { withoutPrices } from "@/lib/products/pricing";
+import { priceOrg } from "@/lib/db/orgs";
 
 export async function GET(_req: Request, ctx: RouteContext<"/api/catalog/products/[id]">) {
   const auth = await requireUser();
   if ("error" in auth) return auth.error;
-  const product = await getProduct((await ctx.params).id);
+  // prices are an account owner's, their own account's
+  const orgId = await priceOrg(auth.user);
+  const product = await getProduct((await ctx.params).id, orgId);
   if (!product) return jsonError(404, "not_found", "המוצר לא נמצא");
-  // prices are the account holder's
-  return Response.json({ product: auth.user.role === "admin" ? product : withoutPrices(product) });
+  return Response.json({ product: orgId ? product : withoutPrices(product) });
 }
 
 /** System admins correct a product: parameter values (null = back to the source), equipment type, category, status. */
@@ -22,6 +24,6 @@ export async function PATCH(req: Request, ctx: RouteContext<"/api/catalog/produc
   const category = typeof body.category === "string" && body.category in CATEGORY_LABEL ? (body.category as CatalogCategory) : undefined;
   const status = body.status === "active" || body.status === "discontinued" || body.status === "review" ? body.status : undefined;
   const deviceType = typeof body.deviceType === "string" && /^[a-z-]{2,20}$/.test(body.deviceType) ? body.deviceType : undefined;
-  const product = await updateProduct((await ctx.params).id, { overrides, category, status, deviceType });
+  const product = await updateProduct((await ctx.params).id, { overrides, category, status, deviceType }, await priceOrg(auth.user));
   return product ? Response.json({ product }) : jsonError(404, "not_found", "המוצר לא נמצא");
 }

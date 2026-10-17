@@ -2,24 +2,33 @@
 
 import { Package, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Input, Modal, cx } from "../ui";
+import { Input, Modal, Select, cx } from "../ui";
 import { BoxIcons } from "./ProductIcons";
 import { CostTag } from "./Prices";
 import { FAMILY_LABEL, categoriesFor, fitsSystem, useCatalog } from "@/lib/products/client";
-import { CATEGORY_LABEL, FORM_LABEL, paramChips, type CatalogCategory, type FormFactor, type LensType, type ProductSummary } from "@/lib/products/types";
+import { DEFAULT_MARKUP, customerPrice, diskText, includedDisk } from "@/lib/products/pricing";
+import { CAMERA_CATEGORIES, CATEGORY_LABEL, FORM_LABEL, paramChips, type CatalogCategory, type FormFactor, type LensType, type ProductSummary } from "@/lib/products/types";
 import type { Device } from "@/lib/types";
 
-/** Choose the catalog model for a device on the map: filtered to its kind, same-brand models first. */
+/** What the customer would pay for it (before VAT), or its cost: for sorting by price. */
+const priceOf = (p: ProductSummary) => customerPrice(p, p.markupPct ?? DEFAULT_MARKUP)?.net ?? p.cost;
+
+/**
+ * Choose a catalog model: for a device on the map, filtered to its kind (same-brand models first);
+ * without a device type, any product in the catalog (e.g. one added to a quote by hand).
+ */
 export function ProductPicker({
   deviceType,
   siteDevices,
   current,
+  title,
   onPick,
   onClose,
 }: {
-  deviceType: string;
+  deviceType?: string;
   siteDevices: Device[];
   current?: string;
+  title?: string;
   onPick: (p: ProductSummary) => void;
   onClose: () => void;
 }) {
@@ -28,15 +37,17 @@ export function ProductPicker({
     void load();
   }, [load]);
 
-  const cats = useMemo(() => categoriesFor(deviceType) ?? [], [deviceType]);
-  const camera = deviceType.startsWith("cam-");
-  const [cat, setCat] = useState<CatalogCategory | "all">(deviceType === "cam-ptz" ? "ptz" : camera ? "ip-camera" : (cats[0] ?? "all"));
+  const cats = useMemo(() => (deviceType ? (categoriesFor(deviceType) ?? []) : (Object.keys(CATEGORY_LABEL) as CatalogCategory[])), [deviceType]);
+  const [cat, setCat] = useState<CatalogCategory | "all">(
+    deviceType === "cam-ptz" ? "ptz" : deviceType?.startsWith("cam-") ? "ip-camera" : deviceType ? (cats[0] ?? "all") : "all",
+  );
   const [q, setQ] = useState("");
   const [mp, setMp] = useState<number | null>(null);
   const [form, setForm] = useState<FormFactor | null>(null);
   const [lens, setLens] = useState<LensType | null>(null);
   const [colorNight, setColorNight] = useState(false);
   const [size, setSize] = useState<number | null>(null);
+  const [sort, setSort] = useState<"fit" | "cheap" | "dear">("fit");
 
   const available = useMemo(() => (products ?? []).filter((p) => cats.includes(p.category)), [products, cats]);
   const catCounts = useMemo(() => {
@@ -47,6 +58,10 @@ export function ProductPicker({
 
   // the default category may have nothing yet: then show every kind
   const activeCat = cat !== "all" && !catCounts[cat] ? "all" : cat;
+  // the filters follow the kind: a camera's, or a recorder's / switch's size
+  const camera = deviceType ? deviceType.startsWith("cam-") : activeCat !== "all" && CAMERA_CATEGORIES.includes(activeCat);
+  const sizeKind = deviceType === "nvr" || activeCat === "nvr" ? "nvr" : deviceType === "switch" || activeCat === "switch" ? "switch" : null;
+  const priced = available.some((p) => priceOf(p) !== undefined);
 
   const shown = useMemo(() => {
     const t = q.trim().toLowerCase();
@@ -59,12 +74,22 @@ export function ProductPicker({
         if (form && s.formFactor !== form) return false;
         if (lens && s.lensType !== lens) return false;
         if (colorNight && !s.colorNight) return false;
-      } else if (size !== null) {
-        const n = deviceType === "nvr" ? s.channels : s.ports;
+      } else if (size !== null && sizeKind) {
+        const n = sizeKind === "nvr" ? s.channels : s.ports;
         if (n === undefined || (size >= 32 ? n < size : n !== size)) return false;
       }
       return true;
     });
+    if (sort !== "fit") {
+      // by price (products without one at the end)
+      const dir = sort === "cheap" ? 1 : -1;
+      return list.sort((a, b) => {
+        const pa = priceOf(a);
+        const pb = priceOf(b);
+        if (pa === undefined || pb === undefined) return Number(pa === undefined) - Number(pb === undefined);
+        return (pa - pb) * dir;
+      });
+    }
     // the site's camera brand first, then by resolution / size and model
     return list.sort(
       (a, b) =>
@@ -72,10 +97,10 @@ export function ProductPicker({
         (a.params.mp ?? a.params.channels ?? a.params.ports ?? 0) - (b.params.mp ?? b.params.channels ?? b.params.ports ?? 0) ||
         a.model.localeCompare(b.model),
     );
-  }, [available, activeCat, q, mp, form, lens, colorNight, size, camera, deviceType, siteDevices]);
+  }, [available, activeCat, q, mp, form, lens, colorNight, size, camera, sizeKind, siteDevices, sort]);
 
   return (
-    <Modal title={`בחירת דגם: ${FAMILY_LABEL(deviceType)}`} onClose={onClose}>
+    <Modal title={title ?? (deviceType ? `בחירת דגם: ${FAMILY_LABEL(deviceType)}` : "בחירת מוצר מהמאגר")} onClose={onClose}>
       {error ? (
         <p className="rounded-lg bg-amber-50 p-3 text-sm text-amber-800">{error}</p>
       ) : !products || loading ? (
@@ -129,18 +154,32 @@ export function ProductPicker({
               </Chips>
             </>
           ) : (
-            (deviceType === "nvr" || deviceType === "switch") && (
+            sizeKind && (
               <Chips>
-                {(deviceType === "nvr" ? [4, 8, 16, 32] : [4, 8, 16, 24]).map((n) => (
+                {(sizeKind === "nvr" ? [4, 8, 16, 32] : [4, 8, 16, 24]).map((n) => (
                   <Chip key={n} active={size === n} onClick={() => setSize(size === n ? null : n)}>
                     {n}
-                    {n >= 32 || (deviceType === "switch" && n >= 24) ? "+" : ""} {deviceType === "nvr" ? "ערוצים" : "פורטים"}
+                    {n >= 32 || (sizeKind === "switch" && n >= 24) ? "+" : ""} {sizeKind === "nvr" ? "ערוצים" : "פורטים"}
                   </Chip>
                 ))}
               </Chips>
             )
           )}
-          <p className="text-xs text-slate-500">{shown.length} דגמים</p>
+          <div className="flex items-center gap-2">
+            <p className="flex-1 text-xs text-slate-500">{shown.length} דגמים</p>
+            {priced && (
+              <label className="flex items-center gap-1.5 text-xs text-slate-500">
+                מיון
+                <span className="w-32">
+                  <Select value={sort} onChange={(e) => setSort(e.target.value as typeof sort)}>
+                    <option value="fit">מתאים ביותר</option>
+                    <option value="cheap">מחיר: מהזול</option>
+                    <option value="dear">מחיר: מהיקר</option>
+                  </Select>
+                </span>
+              </label>
+            )}
+          </div>
           <div className="-mx-1 space-y-1.5">
             {shown.slice(0, 80).map((p) => (
               <ProductRow key={p.id} p={p} active={p.id === current} fits={fitsSystem(p.brandName, siteDevices)} onClick={() => onPick(p)} />
@@ -170,8 +209,11 @@ function ProductRow({ p, active, fits, onClick }: { p: ProductSummary; active: b
           <span className="shrink-0 text-[11px] text-slate-400">{p.brandName}</span>
         </span>
         <span className="line-clamp-1 text-xs text-slate-500">{p.name}</span>
-        <CostTag p={p} />
+        <CostTag p={p} hideDisk />
         <span className="mt-1 flex flex-wrap gap-1">
+          {p.category === "nvr" && includedDisk(p) !== undefined && (
+            <span className={cx("rounded px-1.5 py-0.5 text-[11px] font-medium", includedDisk(p) ? "bg-blue-50 text-blue-800" : "bg-amber-50 text-amber-800")}>{diskText(includedDisk(p))}</span>
+          )}
           {paramChips(p.category, p.params)
             .slice(0, 6)
             .map((c) => (

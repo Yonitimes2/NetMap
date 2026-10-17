@@ -10,6 +10,7 @@ import { CostTag } from "../catalog/Prices";
 import { ParamEditor } from "../catalog/ParamEditor";
 import { BoxIcons, GeneralBadges, TechTiles, generalBadges, techTiles } from "../catalog/ProductIcons";
 import { brandWarning, categoriesFor, productPatch, specPatch, useCatalog } from "@/lib/products/client";
+import { includedDisk } from "@/lib/products/pricing";
 import { PARAM_FIELDS, formatParam, type ProductParams } from "@/lib/products/types";
 import { toast } from "@/lib/toast";
 import type { Device } from "@/lib/types";
@@ -122,7 +123,8 @@ export function DeviceProductSection({ d, siteDevices, ro, onChange }: { d: Devi
       )}
 
       {p.boxIcons && p.boxIcons.length > 0 && <BoxIcons icons={p.boxIcons} />}
-      <TechTiles tiles={techTiles(p.category, spec)} size="sm" />
+      {/* a recorder chosen before the disk was kept on the device: the price list's */}
+      <TechTiles tiles={techTiles(p.category, p.category === "nvr" && spec.includedTb === undefined ? { ...spec, includedTb: includedDisk(listed) } : spec)} size="sm" />
       <GeneralBadges compact badges={generalBadges(p.category, spec, p.boxIcons)} />
 
       <div className="rounded-xl bg-slate-50 px-3 py-1">

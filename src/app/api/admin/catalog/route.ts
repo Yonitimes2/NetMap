@@ -1,15 +1,22 @@
 import { jsonError, readJson, requireUser } from "@/lib/auth/current-user";
+import { getOrg, priceOrg } from "@/lib/db/orgs";
 import { countsByCategory, listBrands, priceListInfo, recentRuns } from "@/lib/products/store";
 import { startWebSync, syncProgress } from "@/lib/products/sync";
 
-/** Brands, how many products each category has, recent updates and the one running now. */
+/**
+ * Brands, how many products each category has, recent updates and the one running now; with the
+ * price list and markup of the account the admin owns (none: no prices).
+ */
 export async function GET() {
   const auth = await requireUser({ admin: true });
   if ("error" in auth) return auth.error;
-  const brands = await listBrands();
+  const orgId = await priceOrg(auth.user);
+  const brands = await listBrands(orgId);
   const out = [];
-  for (const b of brands) out.push({ ...b, counts: await countsByCategory(b.id), runs: await recentRuns(b.id), priceList: await priceListInfo(b.id) });
-  return Response.json({ brands: out, progress: syncProgress() });
+  for (const b of brands) {
+    out.push({ ...b, counts: await countsByCategory(b.id), runs: await recentRuns(b.id), priceList: orgId ? await priceListInfo(orgId, b.id) : null });
+  }
+  return Response.json({ brands: out, progress: syncProgress(), priceOrg: orgId ? await getOrg(orgId) : null });
 }
 
 /** Start updating a brand from its website: { brandId, limit? } */

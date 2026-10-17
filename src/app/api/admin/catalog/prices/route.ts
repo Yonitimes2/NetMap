@@ -1,14 +1,23 @@
 import { jsonError, readJson, requireUser } from "@/lib/auth/current-user";
+import { priceOrg } from "@/lib/db/orgs";
 import { applyPriceList, setMarkup } from "@/lib/products/store";
 import type { PriceRow } from "@/lib/products/pricing";
+
+/** Prices are an account's own: only an account owner imports a price list or sets a markup, for their account. */
+async function ownerOrg() {
+  const auth = await requireUser();
+  if ("error" in auth) return auth;
+  const orgId = await priceOrg(auth.user);
+  return orgId ? { orgId } : { error: jsonError(403, "forbidden", "רק בעל חשבון יכול לעדכן מחירים") };
+}
 
 /**
  * A distributor's price list for a brand (read from the Excel file in the browser):
  * { brandId, source, rows: [{ model, price?, note?, sheet? }], dryRun? }. With dryRun it only
- * reports what would match; otherwise it replaces the brand's costs.
+ * reports what would match; otherwise it replaces the account's costs for the brand.
  */
 export async function POST(req: Request) {
-  const auth = await requireUser({ admin: true });
+  const auth = await ownerOrg();
   if ("error" in auth) return auth.error;
   const body = await readJson(req);
   const brandId = typeof body?.brandId === "string" ? body.brandId : "";
@@ -26,17 +35,17 @@ export async function POST(req: Request) {
       sheet: typeof sheet === "string" ? sheet.slice(0, 60) : undefined,
     });
   }
-  return Response.json({ stats: await applyPriceList(brandId, source, rows, body.dryRun === true) });
+  return Response.json({ stats: await applyPriceList(auth.orgId, brandId, source, rows, body.dryRun === true) });
 }
 
-/** The brand's markup on cost for a customer price: { brandId, markupPct } */
+/** The account's markup on cost for a customer price, per brand: { brandId, markupPct } */
 export async function PATCH(req: Request) {
-  const auth = await requireUser({ admin: true });
+  const auth = await ownerOrg();
   if ("error" in auth) return auth.error;
   const body = await readJson(req);
   const brandId = typeof body?.brandId === "string" ? body.brandId : "";
   const pct = typeof body?.markupPct === "number" ? body.markupPct : NaN;
   if (!brandId || !(pct >= 0 && pct <= 1000)) return jsonError(400, "bad_request", "אחוז לא תקין");
-  await setMarkup(brandId, Math.round(pct * 10) / 10);
+  await setMarkup(auth.orgId, brandId, Math.round(pct * 10) / 10);
   return Response.json({ ok: true });
 }

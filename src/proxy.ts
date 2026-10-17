@@ -7,10 +7,12 @@ import { SESSION_COOKIE, readToken } from "@/lib/auth/session";
  */
 
 const OPEN = new Set(["/login", "/api/auth/login", "/api/auth/logout", "/api/auth/me", "/api/auth/setup"]);
+/** a project's page for its customer, opened from a link (the token is checked by the page and its routes) */
+const LINK_PAGES = ["/q/", "/api/q/"];
 
 export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
-  if (OPEN.has(pathname)) return NextResponse.next();
+  if (OPEN.has(pathname) || LINK_PAGES.some((p) => pathname.startsWith(p))) return NextResponse.next();
   if (await readToken(req.cookies.get(SESSION_COOKIE)?.value)) return NextResponse.next();
 
   if (pathname.startsWith("/api/")) {

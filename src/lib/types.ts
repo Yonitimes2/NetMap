@@ -24,9 +24,27 @@ export interface Membership {
   role: Role;
 }
 
-/** A business — fully isolated tenant. */
+/**
+ * An account: the installer's business (a tenant). It has its own users, customers, price lists
+ * and projects; nothing is shared between accounts except the product catalog.
+ */
+export interface Org {
+  id: string;
+  name: string;
+  /** the signed-in user's role in it ("super" = a system admin who isn't a member) */
+  role: OrgRole;
+}
+
+export type OrgRole = "owner" | "technician" | "super";
+
+/**
+ * A customer of an account (a business the installer works for), with its projects. Each customer is
+ * stored and synced separately, so the customer's own people can be given access to just theirs.
+ */
 export interface Account {
   id: string;
+  /** the account it belongs to (set by the server) */
+  orgId?: string;
   name: string;
   businessType?: string;
   contactName?: string;
@@ -35,6 +53,7 @@ export interface Account {
   createdAt: number;
 }
 
+/** A project: one site of a customer, with its map, through the quote, purchasing, installation and service. */
 export interface Site {
   id: string;
   accountId: string;
@@ -42,7 +61,12 @@ export interface Site {
   address?: string;
   notes?: string;
   createdAt: number;
+  /** where the project is now (none yet = still in the quote) */
+  stage?: ProjectStage;
+  stageAt?: number;
 }
+
+export type ProjectStage = "quote" | "purchase" | "install" | "service";
 
 export interface Point {
   x: number;
@@ -114,6 +138,8 @@ export interface Device {
   camera?: CameraView;
   /** only on comms racks: the cabinet's build and what is mounted in it */
   rack?: RackData;
+  /** the customer had it before the project: on the map, but not quoted, bought or installed */
+  existing?: boolean;
   /** the catalog model this equipment is (chosen from the product catalog) */
   product?: DeviceProduct;
   /** its planning parameters: the catalog's values when the model was chosen, editable per device */

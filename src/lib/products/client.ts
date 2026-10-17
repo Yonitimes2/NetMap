@@ -1,6 +1,7 @@
 "use client";
 
 import { create } from "zustand";
+import { diskText, includedDisk } from "./pricing";
 import { CAMERA_CATEGORIES, type CatalogCategory, type ProductParams, type ProductSummary } from "./types";
 import type { Device, DeviceProduct } from "../types";
 
@@ -41,7 +42,9 @@ export const FAMILY_LABEL = (deviceType: string) =>
  * general fields.
  */
 export function productPatch(d: Device, p: ProductSummary): Partial<Device> {
-  const s = p.params;
+  // a recorder also gets the disk it comes with, as the account's price list sells it
+  const disk = p.category === "nvr" ? includedDisk(p) : undefined;
+  const s = disk === undefined ? p.params : { ...p.params, includedTb: disk };
   const product: DeviceProduct = {
     id: p.id,
     brandId: p.brandId,
@@ -66,7 +69,9 @@ export function productPatch(d: Device, p: ProductSummary): Partial<Device> {
     };
   } else if (p.category === "nvr") {
     if (s.channels) extra.channels = String(s.channels);
-    if (s.hddBays) extra.hdd = `${s.hddBays} דיסקים${s.maxHddTb ? ` · עד ${s.maxHddTb}TB` : ""}`;
+    if (s.hddBays || disk !== undefined) {
+      extra.hdd = [diskText(disk), s.hddBays && `${s.hddBays} ${s.hddBays === 1 ? "מקום לדיסק" : "מקומות לדיסקים"}${s.maxHddTb ? ` עד ${s.maxHddTb}TB` : ""}`].filter(Boolean).join(" · ");
+    }
   } else if (p.category === "switch") {
     extra.managed = s.managed ? "כן" : "לא";
     if (s.poePorts) extra.poe = "PoE";

@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import { useSeesPrices } from "@/lib/access";
 import { useEffect, useState } from "react";
 import { AppShell } from "../AppShell";
 import { Field, Select } from "../ui";
@@ -38,6 +39,7 @@ export function ProductScreen() {
   };
 
   const isAdmin = me?.role === "admin";
+  const showPrices = useSeesPrices();
   return (
     <AppShell crumbs={[{ label: "מאגר מוצרים", href: "/admin/catalog" }, { label: product?.model ?? "" }]}>
       <div className="mx-auto max-w-5xl p-4 sm:p-6">
@@ -46,7 +48,7 @@ export function ProductScreen() {
         ) : !product ? (
           <p className="p-10 text-center text-slate-400">טוען…</p>
         ) : (
-          <ProductDetails product={product} isAdmin={isAdmin} onSave={isAdmin ? save : undefined} side={isAdmin && <Placement product={product} onSave={save} />} />
+          <ProductDetails product={product} showPrices={showPrices} onSave={isAdmin ? save : undefined} side={isAdmin && <Placement product={product} onSave={save} />} />
         )}
       </div>
     </AppShell>
