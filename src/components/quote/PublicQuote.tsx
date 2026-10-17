@@ -2,8 +2,8 @@ import { BadgePercent, Cable, Check, Package, Wrench } from "lucide-react";
 import { deviceTypeById, layerById } from "@/lib/catalog";
 import { VAT, nis } from "@/lib/products/pricing";
 import { SECTION_LABEL, type QuoteSection } from "@/lib/quote";
-import type { PublicFloor, PublicLine, PublicQuote as Data } from "@/lib/public-quote";
-import { PlanScroller } from "./PlanScroller";
+import type { PublicLine, PublicQuote as Data } from "@/lib/public-quote";
+import { FloorPlan } from "./FloorPlan";
 import { PrintButton } from "./PrintButton";
 
 /**
@@ -226,87 +226,4 @@ function Total({
       <span className={`tabular-nums ${muted ? "text-slate-400 line-through" : ""}`}>{value}</span>
     </div>
   );
-}
-
-/** The floor's plan (or what was drawn of it) with the planned equipment, numbered as in the list, and what each camera sees. */
-function FloorPlan({ floor: f, many }: { floor: PublicFloor; many: boolean }) {
-  const s = Math.max(f.W, f.H) / 26; // marker size, in drawing units
-  return (
-    <section className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-200 break-inside-avoid">
-      {many && <h2 className="border-b border-slate-100 px-4 py-2.5 font-semibold">{f.name}</h2>}
-      <PlanScroller tall={f.H > f.W}>
-        <svg viewBox={`0 0 ${f.W} ${f.H}`} className="block h-auto w-full bg-slate-50" role="img" aria-label={`תכנית ${f.name}`}>
-          {f.plan && <image href={f.plan.url} x={0} y={0} width={f.W} height={f.H} preserveAspectRatio="none" />}
-          {f.areas.map((a, i) => (
-            <polygon
-              key={i}
-              points={a.points.map((p) => `${p.x},${p.y}`).join(" ")}
-              fill={a.color}
-              fillOpacity={0.1}
-              stroke={a.color}
-              strokeOpacity={0.4}
-              strokeWidth={s / 8}
-            />
-          ))}
-          {f.walls.map((w, i) => (
-            <line key={i} x1={w.a.x} y1={w.a.y} x2={w.b.x} y2={w.b.y} stroke={w.color} strokeWidth={w.width} strokeLinecap="square" />
-          ))}
-          {f.cables.map((c, i) => (
-            <polyline
-              key={i}
-              points={c.points.map((p) => `${p.x},${p.y}`).join(" ")}
-              fill="none"
-              stroke={c.color}
-              strokeOpacity={0.55}
-              strokeWidth={s / 7}
-              strokeLinejoin="round"
-            />
-          ))}
-          {f.devices.map((d, i) =>
-            d.camera ? (
-              <path
-                key={`fov${i}`}
-                d={cone(d.x, d.y, d.camera.dir, d.camera.fov, d.camera.range * f.ppm)}
-                fill="#dc2626"
-                fillOpacity={0.07}
-                stroke="#dc2626"
-                strokeOpacity={0.3}
-                strokeWidth={s / 10}
-              />
-            ) : null,
-          )}
-          {f.devices.map((d, i) => {
-            const def = deviceTypeById(d.type);
-            const Icon = def.icon;
-            const color = layerById(def.layer).color;
-            return (
-              <g key={i}>
-                <circle cx={d.x} cy={d.y} r={s / 2} fill={color} stroke="#fff" strokeWidth={s / 12} />
-                <Icon x={d.x - s / 4} y={d.y - s / 4} width={s / 2} height={s / 2} color="#fff" strokeWidth={2.4} />
-                {d.n !== undefined && (
-                  <g>
-                    <circle cx={d.x + s / 2.2} cy={d.y - s / 2.2} r={s / 3.2} fill="#0f172a" stroke="#fff" strokeWidth={s / 16} />
-                    <text x={d.x + s / 2.2} y={d.y - s / 2.2} fontSize={s / 2.6} fontWeight={700} fill="#fff" textAnchor="middle" dominantBaseline="central">
-                      {d.n}
-                    </text>
-                  </g>
-                )}
-              </g>
-            );
-          })}
-        </svg>
-      </PlanScroller>
-    </section>
-  );
-}
-
-/** A camera's view: a slice of a circle from the camera, `dir` degrees from the right, clockwise. */
-function cone(x: number, y: number, dir: number, fov: number, r: number) {
-  if (fov >= 359) return `M ${x - r} ${y} a ${r} ${r} 0 1 0 ${2 * r} 0 a ${r} ${r} 0 1 0 ${-2 * r} 0`;
-  const rad = (a: number) => (a * Math.PI) / 180;
-  const a0 = rad(dir - fov / 2);
-  const a1 = rad(dir + fov / 2);
-  const p0 = [x + r * Math.cos(a0), y + r * Math.sin(a0)];
-  const p1 = [x + r * Math.cos(a1), y + r * Math.sin(a1)];
-  return `M ${x} ${y} L ${p0[0]} ${p0[1]} A ${r} ${r} 0 ${fov > 180 ? 1 : 0} 1 ${p1[0]} ${p1[1]} Z`;
 }

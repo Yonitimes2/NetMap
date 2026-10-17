@@ -2,8 +2,7 @@ import { countView, customerDoc, getFinance, getQuoteDefaults, openLink, orgName
 import { listProducts } from "./products/store";
 import { buildQuote, deviceLineKey, type ProductPriceInfo, type QuoteSection } from "./quote";
 import { CAMERA_CATEGORIES, FORM_LABEL, type ProductSummary } from "./products/types";
-import { WALL_TYPES, DEFAULT_PPM } from "./space-catalog";
-import type { CameraView, Point } from "./types";
+import { publicFloor, type PublicFloor } from "./public-plan";
 
 /**
  * What the customer's page shows, read on the server from the link: the project's plan with the
@@ -91,19 +90,6 @@ function cameraName(p: ProductSummary | undefined, fallback: string) {
   return form === "ptz" ? "מצלמת PTZ" : form === "fisheye" ? "מצלמת עין דג (360°)" : `מצלמת ${FORM_LABEL[form]}`;
 }
 
-export interface PublicFloor {
-  id: string;
-  name: string;
-  /** drawing size in map pixels */
-  W: number;
-  H: number;
-  ppm: number;
-  plan?: { url: string };
-  walls: { a: Point; b: Point; color: string; width: number }[];
-  areas: { points: Point[]; color: string; name: string }[];
-  cables: { points: Point[]; color: string }[];
-  devices: { x: number; y: number; type: string; n?: number; camera?: CameraView }[];
-}
 
 export async function loadPublicQuote(token: string): Promise<PublicQuote | null> {
   const link = await openLink(token);
@@ -154,40 +140,28 @@ export async function loadPublicQuote(token: string): Promise<PublicQuote | null
   const t = quote.totals;
   const discountPct = finance.discount?.kind === "pct" && t.discount > 0 ? finance.discount.value : undefined;
 
-  const wallStyle = new Map(WALL_TYPES.map((w) => [w.id, w]));
   const mounted = new Set(devices.flatMap((d) => (d.rack?.items ?? []).map((it) => it.deviceId).filter(Boolean) as string[]));
   const publicFloors: PublicFloor[] = [];
   for (const f of floors) {
-    const ppm = f.pxPerMeter ?? DEFAULT_PPM;
-    // what's mounted in a cabinet is shown by the cabinet (it's in the list)
-    const mine = devices.filter((d) => d.floorId === f.id && !d.existing && !mounted.has(d.id));
+    // the work: what the quote sells (numbered as in its list) and the network points to install. Not what's
+    // mounted in a cabinet (the cabinet stands for it), nor the customer's own (their router, computers, screens)
+    const mine = devices.filter((d) => d.floorId === f.id && !d.existing && !mounted.has(d.id) && (number.has(deviceLineKey(d)) || d.type === "jack"));
     const walls = doc.walls.filter((w) => w.floorId === f.id);
-    const areas = doc.areas.filter((a) => a.floorId === f.id);
-    if (!mine.length && !f.plan && !walls.length) continue;
     const plan = f.plan && planUrl(token, f.plan.src);
-    // the drawing: the plan's size, or what's drawn on the floor (plus a margin)
-    let W = f.plan?.width ?? 0;
-    let H = f.plan?.height ?? 0;
-    if (!plan) {
-      const pts = [...walls.flatMap((w) => [w.a, w.b]), ...areas.flatMap((a) => a.points), ...mine];
-      W = Math.max(12 * ppm, ...pts.map((p) => p.x + 2 * ppm));
-      H = Math.max(8 * ppm, ...pts.map((p) => p.y + 2 * ppm));
-    }
-    publicFloors.push({
-      id: f.id,
-      name: f.name,
-      W,
-      H,
-      ppm,
-      plan: plan ? { url: plan } : undefined,
-      walls: walls.map((w) => {
-        const st = wallStyle.get(w.type);
-        return { a: w.a, b: w.b, color: st?.color ?? "#334155", width: (((w.thicknessCm ?? st?.thickness ?? 15) / 100) * ppm) | 0 || 4 };
+    // a floor with nothing planned on it says nothing to the customer
+    if (!mine.length) continue;
+    publicFloors.push(
+      publicFloor({
+        floor: f,
+        planUrl: plan,
+        devices: mine.map((d) => ({ ...d, n: number.get(deviceLineKey(d)) })),
+        walls,
+        openings: doc.openings.filter((o) => o.floorId === f.id),
+        obstacles: doc.obstacles.filter((o) => o.floorId === f.id),
+        areas: doc.areas.filter((a) => a.floorId === f.id),
+        links: links.filter((l) => l.floorId === f.id),
       }),
-      areas: areas.map((a) => ({ points: a.points, color: a.color, name: a.name })),
-      cables: links.filter((l) => l.floorId === f.id && l.kind === "cable" && l.points.length > 1).map((l) => ({ points: l.points, color: l.color || "#94a3b8" })),
-      devices: mine.map((d) => ({ x: d.x, y: d.y, type: d.type, n: number.get(deviceLineKey(d)), camera: d.camera })),
-    });
+    );
   }
 
   await countView(link.id);

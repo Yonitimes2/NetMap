@@ -11,9 +11,14 @@ const FIT: ZoomView = { k: 1, x: 0, y: 0 };
  * picture, and the wheel zooms — any wheel, or (in a page that scrolls) only a trackpad pinch or
  * Ctrl + wheel, so the page still scrolls. A sideways swipe while not zoomed calls onSwipe.
  */
-export function usePinchZoom({ max = 6, wheel = "always", onSwipe }: { max?: number; wheel?: "always" | "ctrl"; onSwipe?: (dir: 1 | -1) => void } = {}) {
+export function usePinchZoom<T extends HTMLElement = HTMLImageElement>({
+  max = 6,
+  wheel = "always",
+  onSwipe,
+}: { max?: number; wheel?: "always" | "ctrl"; onSwipe?: (dir: 1 | -1) => void } = {}) {
   const stageRef = useRef<HTMLDivElement>(null);
-  const imgRef = useRef<HTMLImageElement>(null);
+  /** what's zoomed: a picture, or anything drawn (a plan) */
+  const imgRef = useRef<T>(null);
   const [view, setView] = useState<ZoomView>(FIT);
   /** fingers / the mouse are moving it: no easing then */
   const [active, setActive] = useState(false);
